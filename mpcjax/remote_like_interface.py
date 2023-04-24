@@ -1,4 +1,4 @@
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Tuple, Union
 
 import numpy as np
 
@@ -59,16 +59,15 @@ def solve_problems(
     #    this function.""".strip()
     #    raise ValueError(msg)
 
-    ## handle the diff_cost_fn ######################################################################
+    # handle the diff_cost_fn ######################################################################
     #if "diff_cost_fn" in problems[0] and diff_cost_fn is None:
     #    msg = """
-    #    WARNING: specifying `diff_cost_fn` in `problems` without providing a batched version is not 
+    #    WARNING: specifying `diff_cost_fn` in `problems` without providing a batched version is not
     #    currently supported. Please provide a batched version of `diff_cost_fn` as an argument to
     #    this function.""".strip()
     #    raise ValueError(msg)
 
     # solve the rest of this problem ###############################################################
-    problems_list = problems
     problems = _stack_problems(problems)
     problems["solver_settings"] = solver_settings
 

@@ -1,18 +1,17 @@
 import time
-from typing import Optional, List, Tuple, Dict, Callable, Any, NamedTuple, Union
+from typing import Optional, Tuple, Dict, Callable, Any
 from copy import copy
-from jfi import jaxm
+
 import jfi
-import numpy as np
+from jfi import jaxm
+
+from jax import Array
 
 from .utils import TablePrinter  # noqa: E402
 from .solver_definitions import get_pinit_state, get_prun_with_state, default_obj_fn
 from .solver_definitions import SOLVER_BFGS, SOLVER_LBFGS, SOLVER_CVX, SOLVER_SQP
 from .dynamics_definitions import get_rollout_and_linearization
 from .utils import _jax_sanitize, _to_dtype_device
-
-tree_util = jaxm.jax.tree_util
-Array = jaxm.jax.Array
 
 # utility routines #################################################################################
 
@@ -43,7 +42,7 @@ def _U2X(U, U_prev, Ft, ft):
 
 
 # main affine solve for a single iteration of SCP ##################################################
-def aff_solve(
+def affine_solve(
     problems: Dict[str, Array],
     reg_x: Array,
     reg_u: Array,
@@ -98,10 +97,6 @@ def aff_solve(
 
     # define the objective function
     if diff_cost_fn is None:
-
-        def obj_fn(U, problems):
-            return default_obj_fn(U, problems)
-
         obj_fn = default_obj_fn
     else:
 
@@ -354,7 +349,7 @@ def scp_solve(
 
         # call the main affine problem solver ######################################################
         t_aff_solve = time.time()
-        X, U, solver_data = aff_solve(
+        X, U, solver_data = affine_solve(
             problems,
             reg_x,
             reg_u,
@@ -380,14 +375,22 @@ def scp_solve(
         dX, dU = X_ - X_prev, U - U_prev
         max_res = max(jaxm.max(jaxm.linalg.norm(dX, 2, -1)), jaxm.max(jaxm.linalg.norm(dU, 2, -1)))
         dX, dU = X_ - X_ref, U - U_ref
-        obj = np.mean(solver_data.get("obj", 0.0))
+        obj = jaxm.mean(solver_data.get("obj", 0.0))
         X_prev, U_prev = X[..., 1:, :], U
         if extra_kw.get("return_solhist", False):
             data.setdefault("solhist", [])
             data["solhist"].append((X_prev, U_prev))
 
         t_run = time.time() - t_elaps
-        vals = (it + 1, t_run, obj, max_res, np.mean(reg_x), np.mean(reg_u), np.mean(smooth_alpha))
+        vals = (
+            it + 1,
+            t_run,
+            obj,
+            max_res,
+            jaxm.mean(reg_x),
+            jaxm.mean(reg_u),
+            jaxm.mean(smooth_alpha),
+        )
         if verbose:
             print_fn(tp.make_values(vals))
         data["solver_data"].append(solver_data)

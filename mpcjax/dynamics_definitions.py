@@ -1,9 +1,9 @@
-import math, os
 from typing import Callable, Tuple, Union
 from jfi import jaxm
 import cloudpickle as cp
 
-bmv = lambda A, x: (A @ x[..., None])[..., 0]
+def bmv(A, x):
+    return (A @ x[..., None])[..., 0]
 
 DYNAMICS_STORE = dict()
 

@@ -1,7 +1,6 @@
-import re
-from typing import Callable, Any, Dict, Optional, List, NamedTuple
-import inspect, traceback
-from enum import Enum
+from typing import Callable, Any, Dict, Optional, List
+import inspect
+import traceback
 from functools import partial
 
 import cloudpickle as cp
@@ -146,7 +145,6 @@ def generate_routines_for_obj_fn(
         traceback.print_exc()
     run_methods = {k: jaxm.jit(solver.run) for k, solver in solvers.items()}
     update_methods = {k: jaxm.jit(solver.update) for k, solver in solvers.items()}
-    run_with_state_methods = dict()
 
     @partial(jaxm.jit, static_argnums=(0,))
     def run_with_state(
