@@ -109,6 +109,7 @@ class ConvexSolver(base.IterativeSolver):
             bets_low = jaxm.to(
                 jaxm.logspace(jaxm.log10(self.min_stepsize), 0.0, lower_ls, dtype=dtype),
                 device=self.device,
+                dtype=dtype,
             )
             bets_up = jaxm.to(
                 jaxm.logspace(
@@ -118,6 +119,7 @@ class ConvexSolver(base.IterativeSolver):
                     dtype=dtype,
                 ),
                 device=self.device,
+                dtype=dtype,
             )[1:]
             bets = jaxm.cat([bets_low, bets_up], -1)
             losses = jaxm.jax.vmap(lambda bet: self.f_fn(params + bet * dp, *args, **kw))(bets)
@@ -248,7 +250,7 @@ class SQPSolver(ConvexSolver):
             linesearch (str, optional): Which linesearch to use from
                                     ["scan", "backtracking", "binary_search"]. Defaults to "scan".
         """
-        assert linesearch != "binary_search", "binary_search not supported for non-convex objetives"
+        assert linesearch != "binary_search", "binary_search not supported for non-cvx objectives"
         super().__init__(
             fun,
             maxiter=maxiter,

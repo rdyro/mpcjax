@@ -9,7 +9,7 @@ def _is_numeric(x):
     try:
         jaxm.array(x)
         return True
-    except TypeError:
+    except (ValueError, TypeError):
         return False
 
 
