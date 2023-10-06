@@ -122,7 +122,9 @@ def affine_solve(
     )
     U = jaxm.where(mask, U, U_prev)
     X = _U2X(U, U_prev, Ft, ft)
-    return jaxm.cat([x0[..., None, :], X], -2), U, dict(solver_state=state, obj=state.value)
+    ret = jaxm.cat([x0[..., None, :], X], -2), U, dict(solver_state=state, obj=state.value)
+    #ret = tree_map(lambda x: x.astype(dtype_org), ret)
+    return ret
 
 
 # cost augmentation ################################################################################
@@ -306,7 +308,6 @@ def scp_solve(
     while it < max_it:
         X_ = jaxm.cat([x0[..., None, :], X_prev[..., :-1, :]], -2)
         f, fx, fu = f_fx_fu_fn(X_, U_prev)
-        f = jaxm.to(jaxm.array(f), **topts).reshape((M, N, xdim))
         if fx is not None:
             fx = jaxm.to(jaxm.array(fx), **topts).reshape((M, N, xdim, xdim))
         if fu is not None:

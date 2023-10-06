@@ -9,6 +9,7 @@ import jaxopt
 
 from jax import Array
 
+#from .second_order_solvers_old import ConvexSolver, SQPSolver
 from .second_order_solvers import ConvexSolver, SQPSolver
 
 ####################################################################################################
@@ -72,7 +73,6 @@ def default_obj_fn(U: Array, problem: Dict[str, List[Array]]) -> Array:
     u0_slew = jaxm.where(jaxm.isfinite(u0_slew), u0_slew, 0.0)
     J_slew = J_slew + jaxm.mean(slew_rate * jaxm.sum((U[..., 0, :] - u0_slew) ** 2, -1))
     J = J + jaxm.where(jaxm.isfinite(J_slew), J_slew, 0.0)
-
     return jaxm.where(jaxm.isfinite(J), J, jaxm.inf)
 
 
@@ -145,6 +145,8 @@ def generate_routines_for_obj_fn(
         traceback.print_exc()
     run_methods = {k: jaxm.jit(solver.run) for k, solver in solvers.items()}
     update_methods = {k: jaxm.jit(solver.update) for k, solver in solvers.items()}
+    #run_methods = {k: solver.run for k, solver in solvers.items()}
+    #update_methods = {k: solver.update for k, solver in solvers.items()}
 
     @partial(jaxm.jit, static_argnums=(0,))
     def run_with_state(

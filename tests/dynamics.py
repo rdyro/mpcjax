@@ -1,4 +1,5 @@
 from jfi import jaxm
+from jax.tree_util import tree_map
 
 
 def car(x, u, p):
@@ -13,6 +14,10 @@ def car(x, u, p):
     u2: turning speed (independent of velocity)
     """
     assert x.shape[-1] == 4 and u.shape[-1] == 2
+
+    dtype_org = x.dtype
+    x, u, p = tree_map(lambda x: x.astype(jaxm.float64), (x, u, p))
+
     v_scale, w_scale, T = p[..., 0], p[..., 1], p[..., 2]
     eps = 1e-6
     u1, u2 = v_scale * u[..., 0], w_scale * -u[..., 1]
@@ -43,7 +48,8 @@ def car(x, u, p):
     xp3 = v0 + T * u1
     xp4 = T * u2 + th0
     xp = jaxm.stack([xp1, xp2, xp3, xp4], -1)
-    return xp
+    # return xp
+    return xp.astype(dtype_org)
 
 
 def fx_(x, u, p):
