@@ -1,14 +1,12 @@
 from pathlib import Path
 from setuptools import setup, find_packages
 
-jfi_path = (Path(__file__).parent / "jfi-JAXFriendlyInterface").absolute()
-
 setup(
     name="mpcjax",
     version="0.2.0",
     packages=find_packages(),
     long_description=Path("README.md").read_text(),
     install_requires=[
-        f"jfi @ file://{jfi_path}",
+        "jfi @ git+https://github.com/rdyro/jfi-JAXFriendlyInterface",
     ],
 )

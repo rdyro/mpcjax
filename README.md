@@ -1,4 +1,5 @@
 # `mpcjax`
+
 Pure JAX implementation of Model Predictive Control (SCP MPC).
 
 This is non-linear dynamics finite horizon MPC solver and support for arbitrary
@@ -6,8 +7,11 @@ cost. It supports batching on the CPU and GPU.
 
 # Installation
 
-Installation can be done by cloning this repository and issuing `pip install .`
-
+Install by issuing
+```bash
+$ pip install mpcjax
+```
+Alternatively, installing from source
 ```bash
 $ git clone https://github.com/rdyro/mpcjax.git
 $ cd mpcjax
@@ -111,6 +115,7 @@ solution if the dynamics are not sufficiently smooth.
 
 The solver supports custom arbitrary cost via each-SCP-iteration cost linearization and custom constraints via each-SCP-iteration constraint reformulation into any convex-cone constraint.
 
+
 - `lin_cost_fn` is an optional callable which allows specifying a custom cost, it
 should take arbitrary `X`, `U` and return a tuple
     - `cx`, the linearization of the cost with respect to the state, `np.shape(cx) == (N, xdim) or cx is None`
@@ -118,7 +123,11 @@ should take arbitrary `X`, `U` and return a tuple
 
 I highly recommend using an auto-diff library to produce the linearizations to avoid unnecessary bugs.
 
-- `diff_cost_fn` is an optional callable which TODO
+- `diff_cost_fn` is an optional callable for specifying arbitrary differentiable cost
+  - this includes custom penalized constraints (e.g., log-barrier or augmented-Lagrangian penalties)
+  - the function can return NaNs for infeasible arguments, but a feasible guess must be provided in `X_prev`, `U_prev`
+
+The functions must accept the call `lin_cost_fn(X, U, problem)` and `diff_cost_fn(X, U, problem)` where `problem` is a Python dictionary with problem data.
 
 ## Misc Settings
 
@@ -139,23 +148,6 @@ def lin_cost_fn(X, U):
     cu = None
     return cx, cu
 ```
-
-## Solver selection
-
-The underlying convex solver can be selected by passing a composite keyword argument
-
-```python
-sol = solve(
-  ...,
-  solver_settings = dict(solver="ecos") # for example, or "cosmo", "osqp", "mosek"
-)
-```
-
-- `ECOS` - FREE - very fast and very general (used by default)
-- `OSQP` - FREE - very fast, but only supports linear constraints
-- `COSMO` - FREE - very general, but it tends to run very slowly
-- `Mosek` - NOT FREE - extremely fast, but requires a (not free) license
-  - requires: a Mosek license
 
 # Warm-start support
 
