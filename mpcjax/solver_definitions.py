@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from typing import Callable, Any, Dict, Optional, List
 import inspect
 import traceback
@@ -9,8 +11,9 @@ import jaxopt
 
 from jax import Array
 
-#from .second_order_solvers_old import ConvexSolver, SQPSolver
+# from .second_order_solvers_old import ConvexSolver, SQPSolver
 from .second_order_solvers import ConvexSolver, SQPSolver
+from .utils import vec, bmv
 
 ####################################################################################################
 
@@ -25,24 +28,15 @@ STATIC_ARGUMENTS = ["jit", "linesearch", "maxls", "reg0", "tol", "device"]
 ####################################################################################################
 
 
-def bmv(A, x):
-    return (A @ x[..., None])[..., 0]
-
-
-def vec(x, n=2):
-    return x.reshape(x.shape[:-n] + (-1,))
-
-
-def default_obj_fn(U: Array, problem: Dict[str, List[Array]]) -> Array:
+def _default_obj_fn(X: Array, U: Array, problem: Dict[str, List[Array]]) -> Array:
     NUMINF = 1e20
-    Ft, ft, X_prev, U_prev = problem["Ft"], problem["ft"], problem["X_prev"], problem["U_prev"]
+    X_prev, U_prev = problem["X_prev"], problem["U_prev"]
     Q, R, X_ref, U_ref = problem["Q"], problem["R"], problem["X_ref"], problem["U_ref"]
     reg_x, reg_u = problem["reg_x"], problem["reg_u"]
     slew_rate, u0_slew = problem["slew_rate"], problem["u0_slew"]
     x_l, x_u, u_l, u_u = problem["x_l"], problem["x_u"], problem["u_l"], problem["u_u"]
     alpha = problem["smooth_alpha"]
 
-    X = (bmv(Ft, vec(U - U_prev, 2)) + ft).reshape(U.shape[:-1] + (-1,))
     dX, dU = X - X_ref, U - U_ref
     J = 0.5 * jaxm.mean(jaxm.sum(dX * bmv(Q, dX), axis=-1))
     J = J + 0.5 * jaxm.mean(jaxm.sum(dU * bmv(R, dU), axis=-1))
@@ -76,26 +70,14 @@ def default_obj_fn(U: Array, problem: Dict[str, List[Array]]) -> Array:
     return jaxm.where(jaxm.isfinite(J), J, jaxm.inf)
 
 
-####################################################################################################
-
-
-def get_pinit_state(obj_fn: Callable, solver_settings=None):
-    ss = solver_settings if solver_settings is not None else dict()
-    obj_fn_key = cp.dumps((obj_fn, tuple((k, ss[k]) for k in STATIC_ARGUMENTS if k in ss.keys())))
-    if obj_fn_key not in SOLVERS_STORE:
-        SOLVERS_STORE[obj_fn_key] = generate_routines_for_obj_fn(obj_fn, ss)
-    return SOLVERS_STORE[obj_fn_key]["pinit_state"]
-
-
-def get_prun_with_state(obj_fn: Callable, solver_settings=None):
-    ss = solver_settings if solver_settings is not None else dict()
-    obj_fn_key = cp.dumps((obj_fn, tuple((k, ss[k]) for k in STATIC_ARGUMENTS if k in ss.keys())))
-    if obj_fn_key not in SOLVERS_STORE:
-        SOLVERS_STORE[obj_fn_key] = generate_routines_for_obj_fn(obj_fn, ss)
-    return SOLVERS_STORE[obj_fn_key]["prun_with_state"]
+def default_obj_fn(U: Array, problem: Dict[str, List[Array]]) -> Array:
+    Ft, ft, U_prev = problem["Ft"], problem["ft"], problem["U_prev"]
+    X = (bmv(Ft, vec(U - U_prev, 2)) + ft).reshape(U.shape[:-1] + (-1,))
+    return _default_obj_fn(X, U, problem)
 
 
 ####################################################################################################
+
 
 
 def filter_kws(method, d):
@@ -114,10 +96,18 @@ def generate_routines_for_obj_fn(
     except RuntimeError:
         device = opts.get("device", "cpu")
 
-    nonlinear_opts = dict(maxiter=100, verbose=False, jit=True, tol=1e-9, linesearch="backtracking")
+    nonlinear_opts = dict(
+        maxiter=100,
+        verbose=False,
+        jit=True,
+        tol=1e-9,
+        linesearch="backtracking",
+        min_stepsize=1e-7,
+        max_stepsize=1e2,
+    )
     cvx_opts = dict(nonlinear_opts, maxls=25, reg0=1e-6, linesearch="binary_search", device=device)
     sqp_opts = dict(cvx_opts, linesearch="scan", maxls=50)
-    nonlinear_opts = dict(nonlinear_opts, **opts)
+    # nonlinear_opts = dict(nonlinear_opts, **opts)
     cvx_opts = dict(cvx_opts, **opts)
     sqp_opts = dict(sqp_opts, **opts)
 
@@ -145,8 +135,8 @@ def generate_routines_for_obj_fn(
         traceback.print_exc()
     run_methods = {k: jaxm.jit(solver.run) for k, solver in solvers.items()}
     update_methods = {k: jaxm.jit(solver.update) for k, solver in solvers.items()}
-    #run_methods = {k: solver.run for k, solver in solvers.items()}
-    #update_methods = {k: solver.update for k, solver in solvers.items()}
+    # run_methods = {k: solver.run for k, solver in solvers.items()}
+    # update_methods = {k: solver.update for k, solver in solvers.items()}
 
     @partial(jaxm.jit, static_argnums=(0,))
     def run_with_state(
@@ -195,3 +185,26 @@ def generate_routines_for_obj_fn(
         prun_with_state=prun_with_state,
         pinit_state=pinit_state,
     )
+
+####################################################################################################
+####################################################################################################
+####################################################################################################
+
+class SolverStore:
+    def __init__(self):
+        self.store = dict()
+
+    def get_routines(self, obj_fn: Callable, solver_settings=None):
+        ss = solver_settings if solver_settings is not None else dict()
+        obj_fn_key = cp.dumps(
+            (hash(obj_fn), tuple((k, ss[k]) for k in STATIC_ARGUMENTS if k in ss.keys()))
+        )
+        if obj_fn_key not in self.store:
+            print("Generating a new solver")
+            self.store[obj_fn_key] = generate_routines_for_obj_fn(obj_fn, ss)
+        return (self.store[obj_fn_key]["pinit_state"], self.store[obj_fn_key]["prun_with_state"])
+
+    
+SOLVERS_STORE = SolverStore()
+
+####################################################################################################

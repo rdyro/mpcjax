@@ -9,6 +9,8 @@ from jaxopt import base  # noqa: E402
 import jax
 from jax import numpy as jnp
 
+#from .utils import balanced_solve, f64_solve
+
 
 class LineSearch(Enum):
     backtracking = 0
@@ -17,9 +19,9 @@ class LineSearch(Enum):
 
 
 class ConvexState(NamedTuple):
-    best_params: jax.Array
-    best_loss: jax.Array
-    value: jax.Array
+    best_params: jaxm.jax.Array
+    best_loss: jaxm.jax.Array
+    value: jaxm.jax.Array
     aux: Any | None = None
 
 
@@ -35,7 +37,7 @@ class ConvexSolver(base.IterativeSolver):
         verbose=False,
         jit=True,
         maxls=20,
-        min_stepsize=1e-3,
+        min_stepsize=1e-7,
         max_stepsize=1e1,
         reg0=1e-6,
         linesearch="scan",
@@ -104,7 +106,7 @@ class ConvexSolver(base.IterativeSolver):
             self.g_fn = g_fn_constructed
             self.h_fn = h_fn_constructed
 
-    @partial(jax.jit, static_argnums=(0,), static_argnames=("maxls", "force_step", "linesearch"))
+    # @partial(jax.jit, static_argnums=(0,), static_argnames=("maxls", "force_step", "linesearch"))
     def init_state(self, params, *args, **config):
         if self.has_aux:
             best_loss, aux = self.f_fn(params, *args)
@@ -113,7 +115,7 @@ class ConvexSolver(base.IterativeSolver):
             best_loss = self.f_fn(params, *args)
             return ConvexState(params, best_loss, best_loss)
 
-    @partial(jax.jit, static_argnums=(0,), static_argnames=("maxls", "force_step", "linesearch"))
+    # @partial(jax.jit, static_argnums=(0,), static_argnames=("maxls", "force_step", "linesearch"))
     def update(self, params, state, *args, **config):
         g, H = self.g_fn(params, *args), self.h_fn(params, *args)
         cond = jaxm.norm(g) > self.tol
@@ -129,29 +131,28 @@ class ConvexSolver(base.IterativeSolver):
         linesearch = config.get("linesearch", self.linesearch)
         maxls = config.get("maxls", self.maxls)
         force_step = config.get("force_step", self.force_step)
-        reg0 = config.get("reg0", self.reg0)
 
         # compute descent direction
         dp = -jaxm.scipy.linalg.cho_solve(
-            jaxm.scipy.linalg.cho_factor(H + reg0 * jnp.eye(H.shape[-1], dtype=dtype)), g
+            jaxm.scipy.linalg.cho_factor(H + self.reg0 * jnp.eye(H.shape[-1], dtype=dtype)), g
         ).reshape(params.shape)
+        # dp = -jaxm.linalg.solve(H + self.reg0 * jnp.eye(H.shape[-1], dtype=dtype), g).reshape(
+        #    params.shape
+        # )
+        # dp = -balanced_solve(H + self.reg0 * jnp.eye(H.shape[-1], dtype=dtype), g[..., None])[
+        #    ..., 0
+        # ].reshape(params.shape)
+        # dp = -f64_solve(H + self.reg0 * jnp.eye(H.shape[-1], dtype=dtype), g[..., None])[
+        #    ..., 0
+        # ].reshape(params.shape)
         if linesearch == LineSearch.scan:
-            lower_ls = max(round(float(0.6 * maxls)), 1)
-            upper_ls = max(1, maxls - lower_ls)
-            lower_ls = maxls - upper_ls
-            bets_low = jnp.logspace(jaxm.log10(self.min_stepsize), 0.0, lower_ls + 1, dtype=dtype)[
-                :-1
-            ]
+            lower_ls = max(round(float(0.7 * maxls)), 1)
+            bets_low = jnp.logspace(jaxm.log10(self.min_stepsize), 0.0, lower_ls, dtype=dtype)
             bets_up = jnp.logspace(
                 0.0, jaxm.log10(self.max_stepsize), maxls - lower_ls, dtype=dtype
-            )
+            )[1:]
             bets = jaxm.cat([bets_low, bets_up], -1)
-            # lower_ls = max(round(float(0.7 * maxls)), 1)
-            # bets_low = jnp.logspace(jaxm.log10(self.min_stepsize), 0.0, lower_ls, dtype=dtype)
-            # bets_up = jnp.logspace(
-            #    0.0, jaxm.log10(self.max_stepsize), maxls - lower_ls, dtype=dtype
-            # )[1:]
-            # bets = jaxm.cat([bets_low, bets_up], -1)
+
             if self.has_aux:
                 losses = jaxm.jax.vmap(lambda bet: self.f_fn(params + bet * dp, *args)[0])(bets)
             else:
@@ -162,19 +163,15 @@ class ConvexSolver(base.IterativeSolver):
             new_params = params + bet * dp
         elif linesearch == LineSearch.backtracking:
 
-            def cond_fn(step_i):
-                step, i = step_i
+            def cond_fn(step):
                 step_not_too_small = step >= self.min_stepsize
                 not_better_loss = self.f_fn(params + step * dp, *args) > state.best_loss
-                return jaxm.logical_and(
-                    i < maxls, jaxm.logical_and(step_not_too_small, not_better_loss)
-                )
+                return jaxm.logical_and(step_not_too_small, not_better_loss)
 
-            def body_fn(step_i):
-                step, i = step_i
-                return step * 0.7, i + 1
+            def body_fn(step):
+                return step * 0.7
 
-            step_size, _ = jaxm.jax.lax.while_loop(cond_fn, body_fn, (1.0, 1))
+            step_size = jaxm.jax.lax.while_loop(cond_fn, body_fn, 1.0)
             new_params = params + step_size * dp
             new_loss = self.f_fn(new_params, *args)
         elif linesearch == LineSearch.binary_search:
@@ -245,17 +242,19 @@ def _find_cholesky_factorization(H, Fl, laml, max_iter):
         return (laml, lamr, Fl, Fr)
 
     laml, lamr, Fl, Fr = jaxm.jax.lax.fori_loop(0, max_iter, body_fn, (laml, lamr, Fl, Fr))
+    # print(f"diff = ", lamr - laml)
     return lamr, Fr
 
 
 @partial(jaxm.jit, static_argnames=("max_iter",))
 def positive_cholesky_factorization(H, reg0=0.0, max_iter=10):
     F = cho_factor(H + reg0 * jnp.eye(H.shape[-1], dtype=H.dtype))
-    return jaxm.jax.lax.cond(
+    ret = jaxm.jax.lax.cond(
         jaxm.isfinite(F[0][0, 0]),
         lambda: (reg0, F),
         lambda: _find_cholesky_factorization(H, F, reg0, max_iter),
     )
+    return ret
 
 
 ####################################################################################################
@@ -270,7 +269,7 @@ class SQPSolver(ConvexSolver):
         verbose=False,
         jit=True,
         maxls=20,
-        min_stepsize=1e-3,
+        min_stepsize=1e-7,
         max_stepsize=1e1,
         reg0=1e-6,
         linesearch="scan",
@@ -294,9 +293,7 @@ class SQPSolver(ConvexSolver):
             linesearch (str, optional): Which linesearch to use from
                                     ["scan", "backtracking", "binary_search"]. Defaults to "scan".
         """
-        assert (
-            linesearch != "binary_search"
-        ), "binary_search not supported for non-convex objectives"
+        assert linesearch != "binary_search", "binary_search not supported for non-convex objetives"
         super().__init__(
             fun,
             maxiter=maxiter,
@@ -319,11 +316,10 @@ class SQPSolver(ConvexSolver):
         g, H = self.g_fn(params, *args), self.h_fn(params, *args)
         dtype = H.dtype
         cond = jaxm.norm(g) > self.tol
-        reg0 = config.get("reg0", self.reg0)
 
         def fix_H_and_update(H):
-            # reg = jaxm.minimum(-jaxm.min(jaxm.linalg.eigvalsh(H)), jaxm.array(0.0, dtype=H.dtype))
-            reg = positive_cholesky_factorization(H, reg0=reg0)[0]
+            # reg = jaxm.minimum(-jaxm.min(jaxm.linalg.eigvalsh(H)), 0.0)
+            reg = positive_cholesky_factorization(H, reg0=self.reg0)[0]
             H = H + reg * jnp.eye(H.shape[-1], dtype=dtype)
             return self._update(g, H, params, state, *args, **config)
 

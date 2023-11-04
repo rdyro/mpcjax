@@ -9,6 +9,23 @@ from jax import Array, Device
 Dtype = TypeVar("Dtype")
 
 
+
+def bmv(A, x):
+    return (A @ x[..., None])[..., 0]
+
+
+def vec(x, n=2):
+    return x.reshape(x.shape[:-n] + (-1,))
+
+
+def atleast_nd(x: Array | None, n: int):
+    if x is None:
+        return None
+    else:
+        return x.reshape((1,) * max(n - x.ndim, 0) + x.shape)
+
+
+
 def _is_numeric(x: Any) -> bool:
     """Check whether and object can be represented as a JAX array."""
     try:
