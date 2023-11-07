@@ -33,7 +33,7 @@ def _default_obj_fn(X: Array, U: Array, problem: Dict[str, List[Array]]) -> Arra
     X_prev, U_prev = problem["X_prev"], problem["U_prev"]
     Q, R, X_ref, U_ref = problem["Q"], problem["R"], problem["X_ref"], problem["U_ref"]
     reg_x, reg_u = problem["reg_x"], problem["reg_u"]
-    slew_rate, u0_slew = problem["slew_rate"], problem["u0_slew"]
+    slew_rate, slew0_rate, u0_slew = problem["slew_rate"], problem["slew0_rate"], problem["u0_slew"]
     x_l, x_u, u_l, u_u = problem["x_l"], problem["x_u"], problem["u_l"], problem["u_u"]
     alpha = problem["smooth_alpha"]
 
@@ -62,10 +62,9 @@ def _default_obj_fn(X: Array, U: Array, problem: Dict[str, List[Array]]) -> Arra
     )
 
     # slew rate
-    J_slew = slew_rate * jaxm.mean(jaxm.sum((U[..., :-1, :] - U[..., 1:, :]) ** 2, -1))
-    slew_rate = jaxm.where(jaxm.all(jaxm.isfinite(u0_slew), -1), slew_rate, 0.0)
+    J_slew = 0.5 * slew_rate * jaxm.mean(jaxm.sum((U[..., :-1, :] - U[..., 1:, :]) ** 2, -1))
     u0_slew = jaxm.where(jaxm.isfinite(u0_slew), u0_slew, 0.0)
-    J_slew = J_slew + jaxm.mean(slew_rate * jaxm.sum((U[..., 0, :] - u0_slew) ** 2, -1))
+    J_slew = J_slew + jaxm.mean(0.5 * slew0_rate * jaxm.sum((U[..., 0, :] - u0_slew) ** 2, -1))
     J = J + jaxm.where(jaxm.isfinite(J_slew), J_slew, 0.0)
     return jaxm.where(jaxm.isfinite(J), J, jaxm.inf)
 
@@ -200,7 +199,7 @@ class SolverStore:
             (hash(obj_fn), tuple((k, ss[k]) for k in STATIC_ARGUMENTS if k in ss.keys()))
         )
         if obj_fn_key not in self.store:
-            print("Generating a new solver")
+            #print("Generating a new solver")
             self.store[obj_fn_key] = generate_routines_for_obj_fn(obj_fn, ss)
         return (self.store[obj_fn_key]["pinit_state"], self.store[obj_fn_key]["prun_with_state"])
 

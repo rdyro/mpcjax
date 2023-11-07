@@ -6,6 +6,7 @@ from inspect import signature
 from typing import Any, Callable, Optional
 
 import jfi
+import jax
 from jax import Array
 from jfi import jaxm
 
@@ -31,20 +32,34 @@ def _augment_cost(
     X_ref: Array,
     U_ref: Array,
     problems: dict[str, Array] | None = None,
+    force_dtype: bool = True,
 ) -> tuple[Array, Array]:
     """Modify the linear reference trajectory to account for the linearized non-linear cost term."""
-    topts = dict(dtype=X_prev.dtype, device=X_prev.device())
+    topts = dict(dtype=X_prev.dtype, device=X_prev.device()) if force_dtype else dict()
+
     if lin_cost_fn is not None:
         cx, cu = lin_cost_fn(X_prev, U_prev, problems)
 
         # augment the state cost #############
         if cx is not None:
-            X_ref = _get_new_ref(X_ref, Q, jaxm.to(jaxm.array(cx), **topts))
+            cx = jaxm.to(cx, **topts) if force_dtype else cx
+            X_ref = _get_new_ref(X_ref, Q, cx)
 
         # augment the control cost ###########
         if cu is not None:
-            U_ref = _get_new_ref(U_ref, R, jaxm.to(jaxm.array(cu), **topts))
+            cu = jaxm.to(cu, **topts) if force_dtype else cu
+            U_ref = _get_new_ref(U_ref, R, cu)
     return X_ref, U_ref
+
+
+@jax.jit
+def _get_X_for_linearization(x0: Array, X: Array) -> Array:
+    return jaxm.cat([x0[..., None, :], X[..., :-1, :]], -2)
+
+
+@jax.jit
+def _get_upper_X(X: Array) -> Array:
+    return X[..., 1:, :]
 
 
 # SCP MPC main routine #############################################################################
@@ -66,6 +81,7 @@ def _build_problems(
     reg_x: float = 1e0,
     reg_u: float = 1e-2,
     slew_rate: Optional[float] = None,
+    slew0_rate: Optional[float] = None,
     u0_slew: Optional[Array] = None,
     cost_fn: Optional[Callable] = None,  # deprecated, do not use
     solver_settings: Optional[dict[str, Any]] = None,
@@ -131,6 +147,7 @@ def _build_problems(
         else jaxm.nan * jaxm.ones(x0.shape[:-1] + (U_prev.shape[-1],), **topts)
     )
     slew_rate = slew_rate if slew_rate is not None else 0.0
+    slew0_rate = slew0_rate if slew0_rate is not None else 0.0
     solver_settings = solver_settings if solver_settings is not None else dict()
     P = extra_kw.get("P", None)
 
@@ -138,7 +155,7 @@ def _build_problems(
 
     problems = dict(M=M, N=N, xdim=xdim, udim=udim, reg_x=reg_x, reg_u=reg_u, f_fx_fu_fn=f_fx_fu_fn)
     problems = dict(problems, x0=x0, X_prev=X_prev, U_prev=U_prev)
-    problems = dict(problems, slew_rate=slew_rate, u0_slew=u0_slew)
+    problems = dict(problems, slew_rate=slew_rate, slew0_rate=slew0_rate, u0_slew=u0_slew)
     problems = dict(problems, x_l=x_l, x_u=x_u, u_l=u_l, u_u=u_u)
     problems = dict(problems, Q=Q, R=R, X_ref=X_ref, U_ref=U_ref, P=P)
     problems = dict(_to_dtype_device(extra_kw, **topts), **problems)
@@ -255,7 +272,7 @@ def solve(
         solver_state=solver_state,
         dtype=dtype,
         device=device,
-        **extra_kw
+        **extra_kw,
     )
 
     # solve sequentially, linearizing ##############################################################
@@ -266,7 +283,8 @@ def solve(
     X, U, solver_data = None, None, None
     X_prev, U_prev = problems["X_prev"], problems["U_prev"]
     while it < max_it:
-        X_ = jaxm.cat([problems["x0"][..., None, :], X_prev[..., :-1, :]], -2)
+        # X_ = jaxm.cat([problems["x0"][..., None, :], X_prev[..., :-1, :]], -2)
+        X_ = _get_X_for_linearization(problems["x0"], X_prev)
         f, fx, fu = f_fx_fu_fn(X_, U_prev, problems["P"])
         if fx is not None:
             fx = jaxm.to(jaxm.array(fx), **topts)
@@ -301,7 +319,7 @@ def solve(
         if not direct_solve:
             X, U, solver_data = scp_affine_solve(problems_to_solve, diff_cost_fn=diff_cost_fn)
         else:
-            X, U, solver_data = direct_affine_solve(problems_to_solve)
+            X, U, solver_data = direct_affine_solve(problems_to_solve, diff_cost_fn=diff_cost_fn)
 
         t_aff_solve = time.time() - t_aff_solve
 
@@ -318,12 +336,14 @@ def solve(
         # return if the solver failed ##############################################################
 
         # compute residuals ########################################################################
-        X_ = X[..., 1:, :]
+        # X_ = X[..., 1:, :]
+        X_ = _get_upper_X(X)
         dX, dU = X_ - X_prev, U - U_prev
         max_res = max(jaxm.max(jaxm.linalg.norm(dX, 2, -1)), jaxm.max(jaxm.linalg.norm(dU, 2, -1)))
         dX, dU = X_ - X_ref, U - U_ref
         obj = jaxm.mean(solver_data.get("obj", 0.0))
-        X_prev, U_prev = X[..., 1:, :], U
+        # X_prev, U_prev = X[..., 1:, :], U
+        X_prev, U_prev = _get_upper_X(X), U
         if extra_kw.get("return_solhist", False):
             data.setdefault("solhist", [])
             data["solhist"].append((X_prev, U_prev))

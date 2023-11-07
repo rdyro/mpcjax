@@ -41,7 +41,6 @@ def generate_optimality_fn(
 ) -> tuple[Array, Array, dict[str, Any]]:
     dtype = Q.dtype if dtype is None else jfi.default_dtype_for_device(device)
     device = (Q.device() if hasattr(Q, "device") else "cpu") if device is None else device
-    topts = dict(device=device, dtype=dtype)
 
     problems = _build_problems(
         f_fx_fu_fn=f_fx_fu_fn,
@@ -69,19 +68,18 @@ def generate_optimality_fn(
 
     problems = copy(problems)
     f_fx_fu_fn = problems["f_fx_fu_fn"]
-    if direct_solve:
-        rollout_fn = DYNAMICS_FUNCTION_STORE.get_rollout_fn(
-            DYNAMICS_FUNCTION_STORE.get_dyn_function(f_fx_fu_fn)
-        )
-    else:
-        rollout_fn = rollout_scp
-    del problems["f_fx_fu_fn"]
+    rollout_fn = DYNAMICS_FUNCTION_STORE.get_rollout_fn(
+        DYNAMICS_FUNCTION_STORE.get_dyn_function(f_fx_fu_fn)
+    )
+    problems["f_fx_fu_fn"] = None
     problems["reg_x"], problems["reg_u"] = 0.0, 0.0
     problems["smooth_alpha"] = problems["solver_settings"]["smooth_alpha"]
-    del problems["solver_settings"]
 
     # define the objective function
-    obj_fn = OBJECTIVE_FUNCTION_STORE.get_obj_fn(rollout_fn, _default_obj_fn, diff_cost_fn)
+    if direct_solve:
+        obj_fn = OBJECTIVE_FUNCTION_STORE.get_obj_fn(rollout_fn, _default_obj_fn, diff_cost_fn)
+    else:
+        obj_fn = OBJECTIVE_FUNCTION_STORE.get_obj_fn(rollout_scp, _default_obj_fn, diff_cost_fn)
     k_fn = jaxm.jit(jaxm.grad(obj_fn, argnums=0))
 
     problems_model = problems
@@ -97,6 +95,12 @@ def generate_optimality_fn(
             problems["smooth_alpha"] = smooth_alpha
         problems["reg_x"], problems["reg_u"] = 0.0, 0.0
 
+        if not direct_solve:
+            X = rollout_fn(U, problems)
+            f, fx, fu = f_fx_fu_fn(X[..., :-1, :], U, problems["P"])
+            problems["f"], problems["fx"], problems["fu"] = f, fx, fu
+            problems["X_prev"], problems["U_prev"] = X[..., 1:, :], U
+
         X_ref_, U_ref_ = _augment_cost(
             lin_cost_fn,
             problems["X_prev"],
@@ -106,6 +110,7 @@ def generate_optimality_fn(
             problems["X_ref"],
             problems["U_ref"],
             dict(problems, solver_settings=_jax_sanitize(problems["solver_settings"])),
+            force_dtype=False,
         )
         problems["X_ref"], problems["U_ref"] = X_ref_, U_ref_
         return k_fn(U, problems)

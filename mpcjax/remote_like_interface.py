@@ -121,30 +121,12 @@ def generate_optimality_fns(
     """
     solver_settings = problems[0].get("solver_settings", dict())
 
-    # handle the lin_cost_fn #######################################################################
-    # if "lin_cost_fn" in problems[0] and lin_cost_fn is None:
-    #    msg = """
-    #    WARNING: specifying `lin_cost_fn` in `problems` without providing a batched version is not
-    #    currently supported. Please provide a batched version of `lin_cost_fn` as an argument to
-    #    this function.""".strip()
-    #    raise ValueError(msg)
-
-    # handle the diff_cost_fn ######################################################################
-    # if "diff_cost_fn" in problems[0] and diff_cost_fn is None:
-    #    msg = """
-    #    WARNING: specifying `diff_cost_fn` in `problems` without providing a batched version is not
-    #    currently supported. Please provide a batched version of `diff_cost_fn` as an argument to
-    #    this function.""".strip()
-    #    raise ValueError(msg)
-
     # solve the rest of this problem ###############################################################
     problems = _stack_problems(problems)
     problems["solver_settings"] = solver_settings
 
     # extract positional arguments #################################################################
     f_fx_fu_fn = problems["f_fx_fu_fn"]
-    # lin_cost_fn = problems.get("lin_cost_fn", None)
-    # diff_cost_fn = problems.get("diff_cost_fn", None)
     Q, R, x0 = problems["Q"], problems["R"], problems["x0"]
     solve_kws = {k: problems[k] for k in problems.keys() if k not in {"f_fx_fu_fn", "Q", "R", "x0"}}
 
@@ -152,9 +134,5 @@ def generate_optimality_fns(
     for k in ["verbose", "max_it", "res_tol", "time_limit"]:
         if k in solve_kws:
             solve_kws[k] = float(solve_kws[k][0])
-    # if lin_cost_fn is not None:
-    #    solve_kws["lin_cost_fn"] = lin_cost_fn
-    # if diff_cost_fn is not None:
-    #    solve_kws["diff_cost_fn"] = diff_cost_fn
 
     return generate_optimality_fn(f_fx_fu_fn, Q, R, x0, **solve_kws, **kw)
