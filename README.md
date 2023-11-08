@@ -5,6 +5,7 @@ Pure JAX implementation of Model Predictive Control (SCP MPC).
 This is non-linear dynamics finite horizon MPC solver and support for arbitrary
 cost. It supports batching on the CPU and GPU.
 
+
 # Installation
 
 Install by issuing
@@ -37,7 +38,7 @@ np.shape(x0) == (xdim,)
 $$x^{(i+1)} \approx f^{(i)} + f_x^{(i)} (x^{(i)} - \tilde{x}^{(i)}) + f_u^{(i)} (u^{(i)} - \tilde{u}^{(i)}) $$
 where 
 ```python
-np.shape(xt) == (N, xdim)
+np.shape(xt) == (N, xdim)kkk
 np.shape(ut) == (N, udim)
 np.shape(f) == (N, xdim)
 np.shape(fx) == (N, xdim, xdim)
@@ -77,14 +78,15 @@ Take a look at
 
 ## Solver Hyperparameters
 
-The solver has two scalar hyperparamters, the dynamics linearization deviation penalty for states and controls
+The solver has two scalar hyperparameters, the dynamics linearization deviation penalty for states and controls
 
 $$
 J_\text{deviation} = \sum_{i=0}^N \frac{1}{2} 
 \rho_x (x^{(i+1)} - x_\text{prev}^{(i+1)})^T (x^{(i+1)} - x_\text{prev}^{(i+1)})
-+ \rho_u (u^{(i)} - u_\text{prev}^{(i)})^T (u^{(i)} - u_\text{prev}^{(i)})
++ \frac{1}{2} \rho_u (u^{(i)} - u_\text{prev}^{(i)})^T (u^{(i)} - u_\text{prev}^{(i)})
 $$
 
+The hyperparameters are
 - `reg_x` - state deviation in-between SCP iterations regularization
 - `reg_u` - control deviation in-between SCP iterations regularization
 
