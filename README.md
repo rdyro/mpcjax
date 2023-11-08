@@ -81,9 +81,7 @@ Take a look at
 The solver has two scalar hyperparameters, the dynamics linearization deviation penalty for states and controls
 
 $$
-J_\text{deviation} = \sum_{i=0}^N \frac{1}{2} 
-\rho_x (x^{(i+1)} - x_\text{prev}^{(i+1)})^T (x^{(i+1)} - x_\text{prev}^{(i+1)})
-+ \frac{1}{2} \rho_u (u^{(i)} - u_\text{prev}^{(i)})^T (u^{(i)} - u_\text{prev}^{(i)})
+J_\text{deviation} = \sum_{i=0}^N \frac{1}{2} \rho_x (x^{(i+1)} - x_\text{prev}^{(i+1)})^T (x^{(i+1)} - x_\text{prev}^{(i+1)}) + \frac{1}{2} \rho_u (u^{(i)} - u_\text{prev}^{(i)})^T (u^{(i)} - u_\text{prev}^{(i)})
 $$
 
 The hyperparameters are
