@@ -6,7 +6,7 @@ from typing import Any, Callable, Optional, Tuple, Union
 from warnings import warn
 
 from jax import Array
-from jfi import jaxm
+from jaxfi import jaxm
 
 from .function_cache import DYNAMICS_FUNCTION_STORE, OBJECTIVE_FUNCTION_STORE
 from .solver_definitions import SOLVER_BFGS, SOLVER_CVX, SOLVER_LBFGS, SOLVER_SQP

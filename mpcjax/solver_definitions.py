@@ -6,7 +6,7 @@ import traceback
 from functools import partial
 
 import cloudpickle as cp
-from jfi import jaxm
+from jaxfi import jaxm
 import jaxopt
 
 from jax import Array

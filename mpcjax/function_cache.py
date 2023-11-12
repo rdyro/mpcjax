@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
-from jfi import jaxm
+from jaxfi import jaxm
 import jax
 from jax import Array
 

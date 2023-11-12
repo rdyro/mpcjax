@@ -5,10 +5,10 @@ from copy import copy
 from inspect import signature
 from typing import Any, Callable, Optional
 
-import jfi
+import jaxfi
 import jax
 from jax import Array
-from jfi import jaxm
+from jaxfi import jaxm
 
 from .utils import TablePrinter  # noqa: E402
 from .utils import _jax_sanitize, _to_dtype_device, atleast_nd
@@ -93,7 +93,7 @@ def _build_problems(
     if cost_fn is not None:
         raise ValueError("cost_fn is deprecated, use lin_cost_fn instead.")
 
-    dtype = Q.dtype if dtype is None else jfi.default_dtype_for_device(device)
+    dtype = Q.dtype if dtype is None else jaxfi.default_dtype_for_device(device)
     device = (Q.device() if hasattr(Q, "device") else "cpu") if device is None else device
     topts = dict(device=device, dtype=dtype)
 
@@ -241,7 +241,7 @@ def solve(
         tuple[Array, Array, dict[str, Any]]: X, U, data
     """
 
-    dtype = Q.dtype if dtype is None else jfi.default_dtype_for_device(device)
+    dtype = Q.dtype if dtype is None else jaxfi.default_dtype_for_device(device)
     device = (Q.device() if hasattr(Q, "device") else "cpu") if device is None else device
     topts = dict(device=device, dtype=dtype)
 

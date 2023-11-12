@@ -3,7 +3,7 @@ from copy import copy
 from functools import partial
 from warnings import warn
 
-from jfi import jaxm
+from jaxfi import jaxm
 
 
 class Problem(Mapping):

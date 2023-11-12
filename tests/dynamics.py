@@ -1,4 +1,4 @@
-from jfi import jaxm
+from jaxfi import jaxm
 from jax.tree_util import tree_map
 
 

@@ -4,7 +4,7 @@ from typing import Any, Callable
 from copy import copy
 from warnings import warn
 
-from jfi import jaxm
+from jaxfi import jaxm
 from jax import Array
 
 

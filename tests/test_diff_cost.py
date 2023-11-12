@@ -2,7 +2,7 @@ import sys
 from pathlib import Path
 
 import numpy as np
-from jfi import jaxm
+from jaxfi import jaxm
 import jax
 from jax import numpy as jnp
 

@@ -3,9 +3,9 @@ from __future__ import annotations
 from typing import Any, Callable, Optional
 from copy import copy
 
-import jfi
+import jaxfi
 from jax import Array
-from jfi import jaxm
+from jaxfi import jaxm
 
 from .jax_solver import _build_problems, _jax_sanitize, _augment_cost
 from .solver_definitions import _default_obj_fn
@@ -39,7 +39,7 @@ def generate_optimality_fn(
     direct_solve: bool = True,
     **extra_kw,
 ) -> tuple[Array, Array, dict[str, Any]]:
-    dtype = Q.dtype if dtype is None else jfi.default_dtype_for_device(device)
+    dtype = Q.dtype if dtype is None else jaxfi.default_dtype_for_device(device)
     device = (Q.device() if hasattr(Q, "device") else "cpu") if device is None else device
 
     problems = _build_problems(

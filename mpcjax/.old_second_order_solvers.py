@@ -4,7 +4,7 @@ from enum import Enum
 from typing import NamedTuple, Callable, Any
 from functools import partial
 
-from jfi import jaxm
+from jaxfi import jaxm
 from jaxopt import base  # noqa: E402
 import jax
 from jax import numpy as jnp

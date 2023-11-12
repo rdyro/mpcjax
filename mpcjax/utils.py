@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, TypeVar
 
-from jfi import jaxm
+from jaxfi import jaxm
 from jax.tree_util import tree_map
 from jax import Array, Device
 

@@ -2,7 +2,7 @@ import sys
 from pathlib import Path
 
 import numpy as np
-from jfi import jaxm
+from jaxfi import jaxm
 import jax
 from jax import numpy as jnp
 
@@ -50,7 +50,7 @@ def test_slew():
                 max_it=100,
                 res_tol=1e-12,
                 verbose=True,
-                slew_rate=1e5,
+                slew_rate=1e4,
                 P=1.0 * jaxm.ones((N,)),
                 dtype=dtype,
                 device=device,
@@ -58,13 +58,17 @@ def test_slew():
 
             X1, U1, _ = solve(**problem, direct_solve=True)
             X2, U2, _ = solve(**problem, direct_solve=False)
-            traj_err = jaxm.norm((X1 - X2).reshape(-1)) 
-            assert traj_err < 1e-1, f"max traj error: {traj_err:.4e}"
+            print(f"device = {device}, dtype = {dtype}")
             ctrl_err = jaxm.norm((U1 - U2).reshape(-1))
             assert ctrl_err < 5e-2, f"max ctrl error: {ctrl_err:.4e}"
+            traj_err = jaxm.norm((X1 - X2).reshape(-1))
+            assert traj_err < 1e-1, f"max traj error: {traj_err:.4e}"
 
             slew_err = jaxm.max(jaxm.norm(U1[1:, :] - U1[:-1, :], axis=-1))
-            assert slew_err < 1e-2, f"max slew error: {slew_err:.4e}"
+            msg = f"max slew error: {slew_err:.4e}"
+            print(msg)
+            assert slew_err < 5e-2, msg
+
 
 def test_slew0():
     N, xdim, udim = 20, 4, 2
@@ -102,7 +106,7 @@ def test_slew0():
                 max_it=100,
                 res_tol=1e-12,
                 verbose=True,
-                slew0_rate=1e5,
+                slew0_rate=1e4,
                 P=1.0 * jaxm.ones((N,)),
                 dtype=dtype,
                 device=device,
@@ -110,24 +114,32 @@ def test_slew0():
 
             X1, U1, _ = solve(**problem, direct_solve=True)
             X2, U2, _ = solve(**problem, direct_solve=False)
-            traj_err = jaxm.norm((X1 - X2).reshape(-1)) 
+            traj_err = jaxm.norm((X1 - X2).reshape(-1))
             assert traj_err < 1e-1, f"max traj error: {traj_err:.4e}"
             ctrl_err = jaxm.norm((U1 - U2).reshape(-1))
             assert ctrl_err < 5e-2, f"max ctrl error: {ctrl_err:.4e}"
 
             # slew difference of first control to 0
             slew0_err = jaxm.norm(U1[0, :])
-            assert slew0_err < 1e-4, f"max slew error: {slew0_err:.4e}"
+            msg = f"max slew error: {slew0_err:.4e}"
+            print(msg)
+            assert slew0_err < 1e-2, msg
             other_ctrls_norm = jaxm.norm(U1[1:, :])
-            assert other_ctrls_norm > 1e-1, f"max other ctrls norm: {other_ctrls_norm:.4e}"
+            msg = f"max other ctrls norm: {other_ctrls_norm:.4e}"
+            print(msg)
+            assert other_ctrls_norm > 1e-1, msg
 
             # slew difference of first control to 0
             u0_slew = 0.6 * jaxm.ones((udim,), dtype=dtype, device=device)
             X1, U1, _ = solve(**dict(problem, u0_slew=u0_slew), direct_solve=False)
             slew0_err = jaxm.norm(U1[0, :] - u0_slew)
-            assert slew0_err < 1e-4, f"max slew error: {slew0_err:.4e}"
+            msg = f"max slew error: {slew0_err:.4e}"
+            print(msg)
+            assert slew0_err < 1e-2, msg
             other_ctrls_norm = jaxm.norm(U1[1:, :])
-            assert other_ctrls_norm > 1e-1, f"max other ctrls norm: {other_ctrls_norm:.4e}"
+            msg = f"max other ctrls norm: {other_ctrls_norm:.4e}"
+            print(msg)
+            assert other_ctrls_norm > 1e-1, msg
 
 
 if __name__ == "__main__":

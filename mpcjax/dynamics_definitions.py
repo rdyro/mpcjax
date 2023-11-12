@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Callable, Tuple, Union, Any
 
 import cloudpickle as cp
-from jfi import jaxm
+from jaxfi import jaxm
 from jax import Array
 
 
