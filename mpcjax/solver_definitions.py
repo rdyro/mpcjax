@@ -8,12 +8,14 @@ from functools import partial
 import cloudpickle as cp
 from jaxfi import jaxm
 import jaxopt
+import numpy as np
 
 from jax import Array
+from jax.tree_util import tree_map
 
 # from .second_order_solvers_old import ConvexSolver, SQPSolver
 from .second_order_solvers import ConvexSolver, SQPSolver
-from .utils import vec, bmv
+from .utils import vec, bmv, logbarrier_cstr_with_lagrange_fallback, auto_pmap
 
 ####################################################################################################
 
@@ -36,6 +38,7 @@ def _default_obj_fn(X: Array, U: Array, problem: Dict[str, List[Array]]) -> Arra
     slew_rate, slew0_rate, u0_slew = problem["slew_rate"], problem["slew0_rate"], problem["u0_slew"]
     x_l, x_u, u_l, u_u = problem["x_l"], problem["x_u"], problem["u_l"], problem["u_u"]
     alpha = problem["smooth_alpha"]
+    lam = problem.get("lam", 1e4)
 
     dX, dU = X - X_ref, U - U_ref
     J = 0.5 * jaxm.mean(jaxm.sum(dX * bmv(Q, dX), axis=-1))
@@ -48,18 +51,22 @@ def _default_obj_fn(X: Array, U: Array, problem: Dict[str, List[Array]]) -> Arra
     x_u_ = jaxm.where(jaxm.isfinite(x_u), x_u, NUMINF)
     u_l_ = jaxm.where(jaxm.isfinite(u_l), u_l, -NUMINF)
     u_u_ = jaxm.where(jaxm.isfinite(u_u), u_u, NUMINF)
-    J = J + jaxm.mean(
-        jaxm.sum(jaxm.where(jaxm.isfinite(x_l), -jaxm.log(-alpha * (-X + x_l_)) / alpha, 0.0), -1)
-    )
-    J = J + jaxm.mean(
-        jaxm.sum(jaxm.where(jaxm.isfinite(x_u), -jaxm.log(-alpha * (X - x_u_)) / alpha, 0.0), -1)
-    )
-    J = J + jaxm.mean(
-        jaxm.sum(jaxm.where(jaxm.isfinite(u_l), -jaxm.log(-alpha * (-U + u_l_)) / alpha, 0.0), -1)
-    )
-    J = J + jaxm.mean(
-        jaxm.sum(jaxm.where(jaxm.isfinite(u_u), -jaxm.log(-alpha * (U - u_u_)) / alpha, 0.0), -1)
-    )
+    # J = J + jaxm.mean(
+    #    jaxm.sum(jaxm.where(jaxm.isfinite(x_l), -jaxm.log(-alpha * (-X + x_l_)) / alpha, 0.0), -1)
+    # )
+    # J = J + jaxm.mean(
+    #    jaxm.sum(jaxm.where(jaxm.isfinite(x_u), -jaxm.log(-alpha * (X - x_u_)) / alpha, 0.0), -1)
+    # )
+    # J = J + jaxm.mean(
+    #    jaxm.sum(jaxm.where(jaxm.isfinite(u_l), -jaxm.log(-alpha * (-U + u_l_)) / alpha, 0.0), -1)
+    # )
+    # J = J + jaxm.mean(
+    #    jaxm.sum(jaxm.where(jaxm.isfinite(u_u), -jaxm.log(-alpha * (U - u_u_)) / alpha, 0.0), -1)
+    # )
+    J = J + jaxm.mean(jaxm.sum(logbarrier_cstr_with_lagrange_fallback(-X + x_l_, alpha, lam), -1))
+    J = J + jaxm.mean(jaxm.sum(logbarrier_cstr_with_lagrange_fallback(X - x_u_, alpha, lam), -1))
+    J = J + jaxm.mean(jaxm.sum(logbarrier_cstr_with_lagrange_fallback(-U + u_l_, alpha, lam), -1))
+    J = J + jaxm.mean(jaxm.sum(logbarrier_cstr_with_lagrange_fallback(U - u_u_, alpha, lam), -1))
 
     # slew rate
     J_slew = 0.5 * slew_rate * jaxm.mean(jaxm.sum((U[..., :-1, :] - U[..., 1:, :]) ** 2, -1))
@@ -76,7 +83,6 @@ def default_obj_fn(U: Array, problem: Dict[str, List[Array]]) -> Array:
 
 
 ####################################################################################################
-
 
 
 def filter_kws(method, d):
@@ -104,8 +110,17 @@ def generate_routines_for_obj_fn(
         min_stepsize=1e-7,
         max_stepsize=1e2,
     )
-    cvx_opts = dict(nonlinear_opts, maxls=25, reg0=1e-6, linesearch="binary_search", device=device)
-    sqp_opts = dict(cvx_opts, linesearch="scan", maxls=50)
+    cvx_opts = dict(
+        nonlinear_opts,
+        maxls=25,
+        reg0=1e-6,
+        linesearch="binary_search",
+        force_step=True,
+        device=device,
+    )
+    # sqp_opts = dict(cvx_opts, linesearch="scan", maxls=10)
+    # sqp_opts = dict(cvx_opts, linesearch="scan", maxls=500)
+    sqp_opts = dict(cvx_opts, linesearch="scan", maxls=200)
     # nonlinear_opts = dict(nonlinear_opts, **opts)
     cvx_opts = dict(cvx_opts, **opts)
     sqp_opts = dict(sqp_opts, **opts)
@@ -142,6 +157,7 @@ def generate_routines_for_obj_fn(
         solver: int, z: Array, args: Dict[str, List[Array]], state, max_it: int = 100
     ):
         update_method = update_methods[solver]
+        # update_method = update_methods[SOLVER_SQP]
 
         def body_fn(i, z_state):
             return update_method(*z_state, args)
@@ -153,17 +169,50 @@ def generate_routines_for_obj_fn(
     def init_state(solver: int, U_prev: Array, args: Dict[str, List[Array]]):
         return solvers[solver].init_state(U_prev, args)
 
+    pmap_fn_cache = dict()
+    vmap_fn_cache = dict()
+
     @partial(jaxm.jit, static_argnums=(0,))
     def prun_with_state(
         solver: int, z: Array, args: Dict[str, List[Array]], state, max_it: int = 100
     ):
-        in_axes = jaxm.jax.tree_util.tree_map(
+        in_axes = tree_map(
             lambda x: 0
             if (hasattr(x, "shape") and x.ndim > 0 and x.shape[0] == z.shape[0])
             else None,
             (solver, z, args, state, max_it),
         )
         return jaxm.jax.vmap(run_with_state, in_axes=in_axes)(solver, z, args, state, max_it)
+
+        #if solver not in vmap_fn_cache:
+        #    in_axes = tree_map(
+        #        lambda x: 0
+        #        if (hasattr(x, "shape") and x.ndim > 0 and x.shape[0] == z.shape[0])
+        #        else None,
+        #        (solver, z, args, state, max_it),
+        #    )
+        #    vmap_fn_cache[solver] = jaxm.jit(
+        #        jaxm.jax.vmap(run_with_state, in_axes=in_axes), static_argnums=0
+        #    )
+        #vmap_ret = vmap_fn_cache[solver](solver, z, args, state, max_it)
+        #return vmap_ret
+
+        #if solver not in pmap_fn_cache:
+        #    in_axes = tree_map(
+        #        lambda x: 0
+        #        if (hasattr(x, "shape") and x.ndim > 0 and x.shape[0] == z.shape[0])
+        #        else None,
+        #        (z, args, state, max_it),
+        #    )
+        #    # pmap_fn_cache[solver] = auto_pmap(
+        #    pmap_fn_cache[solver] = jaxm.jit(
+        #        auto_pmap(
+        #            lambda z, args, state, max_it: run_with_state(solver, z, args, state, max_it),
+        #            in_axes=in_axes,
+        #        )
+        #    )
+        #pmap_ret = pmap_fn_cache[solver](z, args, state, max_it)
+        #return pmap_ret
 
     @partial(jaxm.jit, static_argnums=(0,))
     def pinit_state(solver: int, U_prev: Array, args: Dict[str, List[Array]]):
@@ -185,9 +234,11 @@ def generate_routines_for_obj_fn(
         pinit_state=pinit_state,
     )
 
+
 ####################################################################################################
 ####################################################################################################
 ####################################################################################################
+
 
 class SolverStore:
     def __init__(self):
@@ -199,11 +250,11 @@ class SolverStore:
             (hash(obj_fn), tuple((k, ss[k]) for k in STATIC_ARGUMENTS if k in ss.keys()))
         )
         if obj_fn_key not in self.store:
-            #print("Generating a new solver")
+            # print("Generating a new solver")
             self.store[obj_fn_key] = generate_routines_for_obj_fn(obj_fn, ss)
         return (self.store[obj_fn_key]["pinit_state"], self.store[obj_fn_key]["prun_with_state"])
 
-    
+
 SOLVERS_STORE = SolverStore()
 
 ####################################################################################################

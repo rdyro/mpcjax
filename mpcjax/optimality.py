@@ -11,6 +11,7 @@ from .jax_solver import _build_problems, _jax_sanitize, _augment_cost
 from .solver_definitions import _default_obj_fn
 from .dynamics_definitions import rollout_scp
 from .function_cache import DYNAMICS_FUNCTION_STORE, OBJECTIVE_FUNCTION_STORE
+from .utils import combine_dicts
 
 
 def generate_optimality_fn(
@@ -85,11 +86,7 @@ def generate_optimality_fn(
     problems_model = problems
 
     def optimality_fn(U, problems_input):
-        problems_input = _jax_sanitize(problems_input)
-        problems = copy(problems_model)
-        for k, v in problems_input.items():
-            if k in problems:
-                problems[k] = v
+        problems = _jax_sanitize(combine_dicts(problems_input, problems_model))
         smooth_alpha = problems_input.get("solver_settings", dict()).get("smooth_alpha")
         if smooth_alpha is not None:
             problems["smooth_alpha"] = smooth_alpha

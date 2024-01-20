@@ -220,18 +220,18 @@ cho_factor = jaxm.scipy.linalg.cho_factor
 @partial(jaxm.jit, static_argnames=("max_iter",))
 def _find_cholesky_factorization(H, Fl, laml, max_iter):
     # find the right lambda ###########################
-    def cond_fn(lam_F):
-        _, _, F = lam_F
-        return jaxm.logical_not(jaxm.isfinite(F[0][0, 0]))
+    def cond_fn(lam_F_it):
+        _, _, F, it = lam_F_it
+        return jaxm.logical_and(it < 30, jaxm.logical_not(jaxm.isfinite(F[0][0, 0])))
 
-    def body_fn(lam_F):
-        _, lam, _ = lam_F
+    def body_fn(lam_F_it):
+        _, lam, _, it = lam_F_it
         lam, lam_prev = lam * 5, lam
         F = cho_factor(H + lam * jnp.eye(H.shape[-1], dtype=H.dtype))
-        return (lam_prev, lam, F)
+        return (lam_prev, lam, F, it + 1)
 
     F = cho_factor(H + laml * jnp.eye(H.shape[-1], dtype=H.dtype))
-    laml, lamr, Fr = jaxm.jax.lax.while_loop(cond_fn, body_fn, (laml, laml, F))
+    laml, lamr, Fr, _ = jaxm.jax.lax.while_loop(cond_fn, body_fn, (laml, laml, F, 0))
 
     # find the middle lambda via bisection ############
     def body_fn(i, val):

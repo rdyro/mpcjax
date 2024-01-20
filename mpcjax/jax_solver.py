@@ -93,7 +93,7 @@ def _build_problems(
     if cost_fn is not None:
         raise ValueError("cost_fn is deprecated, use lin_cost_fn instead.")
 
-    dtype = Q.dtype if dtype is None else jaxfi.default_dtype_for_device(device)
+    dtype = Q.dtype if dtype is None else dtype
     device = (Q.device() if hasattr(Q, "device") else "cpu") if device is None else device
     topts = dict(device=device, dtype=dtype)
 
@@ -241,7 +241,7 @@ def solve(
         tuple[Array, Array, dict[str, Any]]: X, U, data
     """
 
-    dtype = Q.dtype if dtype is None else jaxfi.default_dtype_for_device(device)
+    dtype = Q.dtype if dtype is None else dtype
     device = (Q.device() if hasattr(Q, "device") else "cpu") if device is None else device
     topts = dict(device=device, dtype=dtype)
 
@@ -284,7 +284,7 @@ def solve(
     X_prev, U_prev = problems["X_prev"], problems["U_prev"]
     while it < max_it:
         # X_ = jaxm.cat([problems["x0"][..., None, :], X_prev[..., :-1, :]], -2)
-        X_ = _get_X_for_linearization(problems["x0"], X_prev)
+        X_ = _get_X_for_linearization(problems["x0"], X_prev)  # non-jit optimization
         f, fx, fu = f_fx_fu_fn(X_, U_prev, problems["P"])
         if fx is not None:
             fx = jaxm.to(jaxm.array(fx), **topts)
@@ -328,22 +328,15 @@ def solve(
         U = U.reshape((problems["M"], problems["N"], problems["udim"]))
         # call the main affine problem solver ######################################################
 
-        # return if the solver failed ##############################################################
-        if jaxm.any(jaxm.isnan(X)) or jaxm.any(jaxm.isnan(U)):
-            if verbose:
-                print_fn("Solver failed...")
-            return None, None, None
-        # return if the solver failed ##############################################################
-
         # compute residuals ########################################################################
         # X_ = X[..., 1:, :]
-        X_ = _get_upper_X(X)
+        X_ = _get_upper_X(X)  # non-jit optimization
         dX, dU = X_ - X_prev, U - U_prev
         max_res = max(jaxm.max(jaxm.linalg.norm(dX, 2, -1)), jaxm.max(jaxm.linalg.norm(dU, 2, -1)))
         dX, dU = X_ - X_ref, U - U_ref
         obj = jaxm.mean(solver_data.get("obj", 0.0))
         # X_prev, U_prev = X[..., 1:, :], U
-        X_prev, U_prev = _get_upper_X(X), U
+        X_prev, U_prev = _get_upper_X(X), U  # non-jit optimization
         if extra_kw.get("return_solhist", False):
             data.setdefault("solhist", [])
             data["solhist"].append((X_prev, U_prev))
@@ -364,6 +357,17 @@ def solve(
         data["hist"].append({k: val for (k, val) in zip(field_names, vals)})
         data.setdefault("t_aff_solve", [])
         data["t_aff_solve"].append(t_aff_solve)
+
+        # return if the solver failed ##############################################################
+        if jaxm.all(jaxm.isnan(U)):
+            return X, U, data
+
+        # if jaxm.any(jaxm.isnan(X)) or jaxm.any(jaxm.isnan(U)):
+        #    if verbose:
+        #        print_fn("Solver failed...")
+        #    return X, U, data
+        # return if the solver failed ##############################################################
+
         # compute residuals ########################################################################
 
         # store the minimum violation solution #####################################################

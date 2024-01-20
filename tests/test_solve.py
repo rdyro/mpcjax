@@ -6,12 +6,15 @@ from jaxfi import jaxm
 import jax
 from jax import numpy as jnp
 
-root_path = Path("").absolute().parent
-if str(root_path) not in sys.path:
-    sys.path.insert(0, str(root_path))
-
 from mpcjax import solve
-from tests.dynamics import f_fx_fu_fn
+try:
+    from .dynamics import f_fx_fu_fn
+except ImportError:
+    root_path = Path(__file__).absolute().parents[1]
+    if str(root_path) not in sys.path:
+        sys.path.insert(0, str(root_path))
+
+    from tests.dynamics import f_fx_fu_fn
 
 
 def test_simple_solve():

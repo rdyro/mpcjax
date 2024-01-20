@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from copy import copy
 from functools import partial
 from typing import Any, Callable, Optional, Tuple, Union
@@ -69,12 +70,13 @@ def _direct_affine_solve(
 
     # solve
     U, state = run_with_state_fn(solver, U_prev, problems, state, max_it=max_inner_it)
-
+    U, state = jaxm.to((U, state), U_prev.device())
     # remove the nans with previous solution (if any)
-    mask = jaxm.tile(
-        jaxm.isfinite(state.value)[..., None, None], (1,) * state.value.ndim + U.shape[-2:]
-    )
-    U = jaxm.where(mask, U, U_prev)
+    #mask = jaxm.tile(
+    #    jaxm.isfinite(state.value)[..., None, None], (1,) * state.value.ndim + U.shape[-2:]
+    #)
+    #U = jaxm.where(mask, U, U_prev)
+    U = jaxm.where(jaxm.isfinite(state.value), 1.0, math.nan)[..., None, None] * U
     X = rollout_fn(U, problems)
     ret = X, U, dict(solver_state=state, obj=state.value)
     return ret

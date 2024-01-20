@@ -1,5 +1,6 @@
 from jaxfi import jaxm
 from jax.tree_util import tree_map
+import jax
 
 
 def car(x, u, p):
@@ -66,4 +67,7 @@ def fu_(x, u, p):
 def f_fx_fu_fn(x, u, p=None):
     if p is None:
         p = jaxm.to(jaxm.array([1.0, 1.0, 0.3]), dtype=x.dtype)
-    return car(x, u, p), fx_(x, u, p), fu_(x, u, p)
+    if x.ndim == 3:
+        return jax.vmap(car)(x, u, p), jax.vmap(fx_)(x, u, p), jax.vmap(fu_)(x, u, p)
+    else:
+        return car(x, u, p), fx_(x, u, p), fu_(x, u, p)

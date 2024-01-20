@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from typing import Any, Callable
 from copy import copy
 from warnings import warn
@@ -24,7 +25,7 @@ def _U2X(U, U_prev, Ft, ft):
 
 
 # main affine solve for a single iteration of SCP ##################################################
-def scp_affine_solve(
+def _scp_affine_solve(
     problems: dict[str, Array], diff_cost_fn: Callable | None = None
 ) -> tuple[Array, Array, Any]:
     """Solve a single instance of a linearized MPC problem.
@@ -73,6 +74,7 @@ def scp_affine_solve(
         solver = "SQP"
     solver, max_inner_it = solver_map[solver]
     max_inner_it = solver_settings.get("max_it", max_inner_it)
+    #print(f"max_inner_it = {max_inner_it}")
 
     # define the objective function
     obj_fn = OBJECTIVE_FUNCTION_STORE.get_obj_fn(rollout_scp, _default_obj_fn, diff_cost_fn)
@@ -88,10 +90,23 @@ def scp_affine_solve(
     U, state = run_with_state_fn(solver, U_prev, problems, state, max_it=max_inner_it)
 
     # remove the nans with previous solution (if any)
-    mask = jaxm.tile(
-        jaxm.isfinite(state.value)[..., None, None], (1,) * state.value.ndim + U.shape[-2:]
-    )
-    U = jaxm.where(mask, U, U_prev)
+    # mask = jaxm.tile(
+    #    jaxm.isfinite(state.value)[..., None, None], (1,) * state.value.ndim + U.shape[-2:]
+    # )
+    # U = jaxm.where(mask, U, U_prev)
+    U = jaxm.where(jaxm.isfinite(state.value), 1.0, math.nan)[..., None, None] * U
     X = rollout_scp(U, problems)
     ret = X, U, dict(solver_state=state, obj=state.value)
     return ret
+
+
+def scp_affine_solve(
+    problems: dict[str, Array], diff_cost_fn: Callable | None = None
+) -> tuple[Array, Array, Any]:
+    # import line_profiler
+    # LP = line_profiler.LineProfiler()
+    # LP.add_function(_scp_affine_solve)
+    # ret = LP.wrap_function(_scp_affine_solve)(problems, diff_cost_fn=diff_cost_fn)
+    # LP.print_stats(output_unit=1e-3)
+    # return ret
+    return _scp_affine_solve(problems, diff_cost_fn=diff_cost_fn)
