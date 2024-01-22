@@ -6,8 +6,8 @@ from typing import Any, TypeVar
 from jaxfi import jaxm
 from jax.tree_util import tree_map, tree_flatten, tree_unflatten
 from jax import Array, Device
-
 from jax import api_util
+import numpy as np
 
 Dtype = TypeVar("Dtype")
 
@@ -67,8 +67,19 @@ def atleast_nd(x: Array | None, n: int):
         return x.reshape((1,) * max(n - x.ndim, 0) + x.shape)
 
 
+# vendored directly from Equinox: https://github.com/patrick-kidger/equinox
+def is_array_like(element: Any) -> bool:
+    """Returns `True` if `element` is a JAX array, a NumPy array, or a Python
+    `float`/`complex`/`bool`/`int`.
+    """
+    return isinstance(
+        element, (jax.Array, np.ndarray, np.generic, float, complex, bool, int)
+    ) or hasattr(element, "__jax_array__")
+
+
 def _is_numeric(x: Any) -> bool:
     """Check whether and object can be represented as a JAX array."""
+    return is_array_like(x)
     try:
         jaxm.array(x)
         return True
@@ -235,13 +246,11 @@ def auto_pmap(fn, device="cpu", in_axes=0, out_axes=0):
             ]
             out_pmap2 = jaxm.jax.pmap(
                 jaxm.jax.vmap(fn, in_axes=in_axes),
-                devices=devices[: remain_size],
+                devices=devices[:remain_size],
                 in_axes=in_axes,
             )(*tree_unflatten(args_struct, args_flat_pmap2))
             out_pmap_flat2 = tree_flatten(out_pmap2)[0]
-            out_pmap_flat2 = [
-                x.reshape((remain_size,) + x.shape[2:]) for x in out_pmap_flat2
-            ]
+            out_pmap_flat2 = [x.reshape((remain_size,) + x.shape[2:]) for x in out_pmap_flat2]
             out_all_flat = [
                 jaxm.concatenate((x, y), axis=0) for x, y in zip(out_pmap_flat, out_pmap_flat2)
             ]

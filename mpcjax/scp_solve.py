@@ -1,19 +1,24 @@
 from __future__ import annotations
 
 import math
-from typing import Any, Callable
+from typing import Any, Callable, Tuple
 from copy import copy
 from warnings import warn
+from functools import partial
 
 from jaxfi import jaxm
+import jax
 from jax import Array
 
 
+from .function_cache import DynamicsFunctionStore, ObjectiveFunctionStore
 from .function_cache import DYNAMICS_FUNCTION_STORE, OBJECTIVE_FUNCTION_STORE
 from .dynamics_definitions import rollout_scp, Ft_ft_fn_scp
-from .solver_definitions import SOLVER_BFGS, SOLVER_CVX, SOLVER_LBFGS, SOLVER_SQP
+from .solver_definitions import generate_routines_for_obj_fn
+from .solver_definitions import SOLVER_MAP
 from .solver_definitions import _default_obj_fn, SOLVERS_STORE
-from .utils import vec, bmv
+from .utils import vec, bmv, _jax_sanitize
+from .solver_settings import SolverSettings
 
 
 @jaxm.jit
@@ -25,88 +30,52 @@ def _U2X(U, U_prev, Ft, ft):
 
 
 # main affine solve for a single iteration of SCP ##################################################
-def _scp_affine_solve(
-    problems: dict[str, Array], diff_cost_fn: Callable | None = None
-) -> tuple[Array, Array, Any]:
-    """Solve a single instance of a linearized MPC problem.
-
-    Args:
-        problems (Dict[str, Array]): A dictionary of stacked (batched) problem arrays.
-        reg_x (Array): State deviation penalty (SCP regularization).
-        reg_u (Array): Control deviation penalty (SCP regularization).
-        solver_settings (Optional[Dict[str, Any]], optional): Solver settings. Defaults to None.
-        diff_cost_fn (Optional[Callable], optional): Extra obj_fn to add to the default objective
-                                                     function. Defaults to None.
-        differentiate_rollout (bool, optional): Whether to differentiate rollout or assume linear
-                                                per-state approximation to the dynamics. Requires
-                                                differentiable dynamics function. Defaults to False.
-    Returns:
-        Tuple[Array, Array, Any]: X, U, solver_data
-    """
-    # solver_settings = copy(solver_settings) if solver_settings is not None else dict()
-    problems = copy(problems)
-    solver_settings = dict()
-    if "solver_settings" in problems:
-        solver_settings = copy(problems["solver_settings"])
-        del problems["solver_settings"]
-    alpha = solver_settings["smooth_alpha"]
-    U_prev = problems["U_prev"]
+@partial(
+    jax.jit,
+    static_argnames=("diff_cost_fn", "f_fx_fu_fn", "solver_settings"),
+)
+def scp_affine_solve(
+    diff_cost_fn: Callable | None = None,
+    **problems: dict[str, Array],
+) -> Tuple[Array, Array, Any]:
+    """Solve a single instance of a linearized MPC problem."""
 
     # use the linearized dynamics or linearize dynamics ourselves if `differentiate_rollout` is True
+    U_prev = problems["U_prev"]
+    solver_settings: SolverSettings = problems["solver_settings"]
     problems["f_fx_fu_fn"] = None
-    # Ft_ft_fn = get_rollout_and_linearization("default")[1]
-    # Ft_ft_fn = DYNAMICS_FUNCTION_STORE.get_linearization_fn("scp")
-    # Ft, ft = Ft_ft_fn(x0, U_prev, f, fx, fu, X_prev, U_prev)
-    # problems["Ft"], problems["ft"] = Ft, ft
-    problems["smooth_alpha"] = alpha
 
-    # retrive the solver and the correct settings
-    solver = solver_settings.get("solver", "SQP").upper()
-    solver_map = dict(
-        BFGS=(SOLVER_BFGS, 100),
-        LBFGS=(SOLVER_LBFGS, 100),
-        CVX=(SOLVER_CVX, 30),
-        SQP=(SOLVER_SQP, 30),
-    )
-    # assert solver in solver_map, f"Solver {solver_settings.get('solver')} not supported."
-    if solver not in solver_map:
-        warn(f"Solver {solver_settings.get('solver')} not supported. Defaulting to SQP solver.")
-        solver = "SQP"
-    solver, max_inner_it = solver_map[solver]
-    max_inner_it = solver_settings.get("max_it", max_inner_it)
-    #print(f"max_inner_it = {max_inner_it}")
+    # retrieve the solver and the correct settings
+    solver = SOLVER_MAP[solver_settings.solver.lower()]
+    max_inner_it = solver_settings.max_it
 
     # define the objective function
-    obj_fn = OBJECTIVE_FUNCTION_STORE.get_obj_fn(rollout_scp, _default_obj_fn, diff_cost_fn)
+    obj_fn = ObjectiveFunctionStore._generate_objective_function(
+        rollout_scp, _default_obj_fn, diff_cost_fn
+    )
 
     # retrieve the (cached) optimization routines based on the objective and solver settings
-    init_state_fn, run_with_state_fn = SOLVERS_STORE.get_routines(obj_fn, solver_settings)
-    state = solver_settings.get("solver_state", None)
+    routines = generate_routines_for_obj_fn(obj_fn, solver_settings)
+    init_state_fn, run_with_state_fn = routines["pinit_state"], routines["prun_with_state"]
 
-    if state is None or solver in {SOLVER_CVX, SOLVER_SQP}:
-        state = init_state_fn(solver, U_prev, problems)
+    problems = _jax_sanitize(problems)
+    state = init_state_fn(solver, U_prev, problems)
 
     # solve
     U, state = run_with_state_fn(solver, U_prev, problems, state, max_it=max_inner_it)
-
-    # remove the nans with previous solution (if any)
-    # mask = jaxm.tile(
-    #    jaxm.isfinite(state.value)[..., None, None], (1,) * state.value.ndim + U.shape[-2:]
-    # )
-    # U = jaxm.where(mask, U, U_prev)
     U = jaxm.where(jaxm.isfinite(state.value), 1.0, math.nan)[..., None, None] * U
     X = rollout_scp(U, problems)
     ret = X, U, dict(solver_state=state, obj=state.value)
     return ret
 
 
-def scp_affine_solve(
-    problems: dict[str, Array], diff_cost_fn: Callable | None = None
-) -> tuple[Array, Array, Any]:
-    # import line_profiler
-    # LP = line_profiler.LineProfiler()
-    # LP.add_function(_scp_affine_solve)
-    # ret = LP.wrap_function(_scp_affine_solve)(problems, diff_cost_fn=diff_cost_fn)
-    # LP.print_stats(output_unit=1e-3)
-    # return ret
-    return _scp_affine_solve(problems, diff_cost_fn=diff_cost_fn)
+# def scp_affine_solve(
+#    problems: dict[str, Array], diff_cost_fn: Callable | None = None
+# ) -> tuple[Array, Array, Any]:
+#    # import line_profiler
+#    # LP = line_profiler.LineProfiler()
+#    # LP.add_function(_scp_affine_solve)
+#    # ret = LP.wrap_function(_scp_affine_solve)(problems, diff_cost_fn=diff_cost_fn)
+#    # LP.print_stats(output_unit=1e-3)
+#    # return ret
+#    return _scp_affine_solve(problems, diff_cost_fn=diff_cost_fn)

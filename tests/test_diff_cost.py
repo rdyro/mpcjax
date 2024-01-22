@@ -6,11 +6,11 @@ from jaxfi import jaxm
 import jax
 from jax import numpy as jnp
 
-root_path = Path("").absolute().parent
+root_path = Path(__file__).absolute().parents[1]
 if str(root_path) not in sys.path:
     sys.path.insert(0, str(root_path))
 
-from mpcjax import solve
+from mpcjax import solve, SolverSettings
 from tests.dynamics import f_fx_fu_fn
 
 
@@ -49,7 +49,7 @@ def test_simple_diff_cost():
                 U_prev=U_prev,
                 u_l=u_l,
                 u_u=u_u,
-                solver_settings=dict(smooth_alpha=1e0, solver="sqp", linesearch="scan", maxls=100),
+                solver_settings=SolverSettings(solver="sqp", linesearch="scan", maxls=100),
                 reg_x=1e0,
                 reg_u=1e-1,
                 max_it=100,
@@ -58,9 +58,9 @@ def test_simple_diff_cost():
                 slew_rate=1e-2,
                 P=1.0 * jaxm.ones((N,)),
                 diff_cost_fn=diff_cost_fn,
-                dtype=dtype,
-                device=device,
+                smooth_alpha=1e0
             )
+            problem = jaxm.to(problem, device=device, dtype=dtype)
 
             X1, U1, _ = solve(**problem, direct_solve=True)
             X2, U2, _ = solve(**problem, direct_solve=False)

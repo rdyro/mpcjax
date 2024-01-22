@@ -7,7 +7,9 @@ from jaxfi import jaxm
 
 from .jax_solver import solve
 from .utils import _is_numeric
-from .optimality import generate_optimality_fn
+#from .optimality import generate_optimality_fn
+from .optimality import optimality_fn
+from .sanitize import sanitize_keywords
 
 Array = jaxm.jax.Array
 tree_flatten = jaxm.jax.tree_util.tree_flatten
@@ -59,13 +61,34 @@ def solve_problems(
     f_fx_fu_fn = problems["f_fx_fu_fn"]
     Q, R, x0 = problems["Q"], problems["R"], problems["x0"]
     solve_kws = {k: problems[k] for k in problems.keys() if k not in {"f_fx_fu_fn", "Q", "R", "x0"}}
+    solve_kws = sanitize_keywords(solve, solve_kws, warn=True)
 
     # reinsert non-jax-batchable options ###########################################################
-    for k in ["verbose", "max_it", "res_tol", "time_limit"]:
+    static_argnames = (
+        ("max_it", int),
+        ("verbose", bool),
+        ("direct_solve", bool),
+        ("res_tol", float),
+        ("reg_x", float),
+        ("reg_u", float),
+        ("dtype", lambda x: x),
+    )
+    for k, t in static_argnames:
         if k in solve_kws:
-            solve_kws[k] = float(solve_kws[k][0])
-
-    X, U, data = solve(f_fx_fu_fn, Q, R, x0, **solve_kws, **kw)
+            try:
+                solve_kws[k] = t(solve_kws[k][0])
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
+                print(f"Failed to convert {k} to {t} with error {e}")
+                print(end="", flush=True)
+    try:
+        X, U, data = solve(f_fx_fu_fn, Q, R, x0, **solve_kws, **kw)
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        print({k: type(v) for k, v in solve_kws.items()})
+        print(end="", flush=True)
 
     # split the problem into separate solutions if requested #######################################
     if split:

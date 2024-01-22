@@ -11,14 +11,13 @@ from copy import copy
 from multiprocessing import Process, Value, get_start_method, set_start_method
 from socket import gethostbyname, gethostname
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from dataclasses import asdict
 
 import numpy as np  # noqa: E401
 import psutil
 import zmq
 import zstandard
 
-# import cloudpickle as serializer
-# import dill as serializer
 from tqdm import tqdm
 import logging
 
@@ -57,19 +56,18 @@ if MEASURE_SERIALIZATION_TIME:
 else:
     from cache4rpc import serialize as serialize_, deserialize as deserialize_
 
-    def serialize(obj, comment: str = ""): # ignore the comment
+    def serialize(obj, comment: str = ""):  # ignore the comment
         return serialize_(obj)
 
-    def deserialize(obj, comment: str = ""): # ignore the comment
+    def deserialize(obj, comment: str = ""):  # ignore the comment
         return deserialize_(obj)
 
 
 ####################################################################################################
 
-# from .jax_solver import solve as solve_
-
 from .problem_struct import Problem
 from .remote_like_interface import solve_problems as remote_like_solve_problems
+from .solver_settings import SolverSettings
 
 ####################################################################################################
 
@@ -189,30 +187,9 @@ def precompilation_call():
     p.f_fx_fu_fn = linear_dynamics_f_fx_fu_fn
     p.u_l, p.u_u = -10 * np.ones((p.N, p.udim)), 10 * np.ones((p.N, p.udim))
     solver_settings = copy(p.solver_settings)
-    for solver in ["ecos", "osqp"]:
-        for smooth in [True, False]:
-            p.solver_settings = dict(solver_settings, solver=solver)
-            if smooth and solver in ["ecos"]:
-                p.solver_settings = dict(
-                    p.solver_settings, smooth_cstr="logbarrier", smooth_alpha=1e1
-                )
-            try:
-                solve_(**p)
-            except RuntimeError:
-                pass  # Mosek might be missing a license
-
-    # Q, R, x0 = np.eye(2)[None, ...], np.eye(1)[None, ...], np.zeros(2)
-    # f_fx_fu_fn = lambda x, u: (  # noqa: E731
-    #    np.zeros((1, 2)),
-    #    np.eye(2)[None, ...],
-    #    np.ones((2, 1))[None, ...],
-    # )
-    # args = (f_fx_fu_fn, Q, R, x0)
-    # solve_(*args, max_it=1, verbose=True)
-
-    # blocking = True
-    # call("solve", gethostbyname(hostname), port, blocking, *args, max_it=1, verbose=True)
-
+    for solver in ["sqp"]:
+        p.solver_settings = SolverSettings(**dict(asdict(solver_settings), solver=solver))
+        solve_(**p)
 
 ####################################################################################################
 

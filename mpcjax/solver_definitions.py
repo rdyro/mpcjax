@@ -4,11 +4,11 @@ from typing import Callable, Any, Dict, Optional, List
 import inspect
 import traceback
 from functools import partial
+import dataclasses
 
 import cloudpickle as cp
 from jaxfi import jaxm
 import jaxopt
-import numpy as np
 
 from jax import Array
 from jax.tree_util import tree_map
@@ -16,6 +16,7 @@ from jax.tree_util import tree_map
 # from .second_order_solvers_old import ConvexSolver, SQPSolver
 from .second_order_solvers import ConvexSolver, SQPSolver
 from .utils import vec, bmv, logbarrier_cstr_with_lagrange_fallback, auto_pmap
+from .solver_settings import SolverSettings
 
 ####################################################################################################
 
@@ -23,9 +24,10 @@ SOLVER_BFGS = 0
 SOLVER_LBFGS = 1
 SOLVER_CVX = 2
 SOLVER_SQP = 3
+SOLVER_MAP = {"bfgs": SOLVER_BFGS, "lbfgs": SOLVER_LBFGS, "cvx": SOLVER_CVX, "sqp": SOLVER_SQP}
 
 SOLVERS_STORE = dict()
-STATIC_ARGUMENTS = ["jit", "linesearch", "maxls", "reg0", "tol", "device"]
+STATIC_ARGUMENTS = ["jit", "linesearch", "maxls", "reg0", "tol"]
 
 ####################################################################################################
 
@@ -51,18 +53,6 @@ def _default_obj_fn(X: Array, U: Array, problem: Dict[str, List[Array]]) -> Arra
     x_u_ = jaxm.where(jaxm.isfinite(x_u), x_u, NUMINF)
     u_l_ = jaxm.where(jaxm.isfinite(u_l), u_l, -NUMINF)
     u_u_ = jaxm.where(jaxm.isfinite(u_u), u_u, NUMINF)
-    # J = J + jaxm.mean(
-    #    jaxm.sum(jaxm.where(jaxm.isfinite(x_l), -jaxm.log(-alpha * (-X + x_l_)) / alpha, 0.0), -1)
-    # )
-    # J = J + jaxm.mean(
-    #    jaxm.sum(jaxm.where(jaxm.isfinite(x_u), -jaxm.log(-alpha * (X - x_u_)) / alpha, 0.0), -1)
-    # )
-    # J = J + jaxm.mean(
-    #    jaxm.sum(jaxm.where(jaxm.isfinite(u_l), -jaxm.log(-alpha * (-U + u_l_)) / alpha, 0.0), -1)
-    # )
-    # J = J + jaxm.mean(
-    #    jaxm.sum(jaxm.where(jaxm.isfinite(u_u), -jaxm.log(-alpha * (U - u_u_)) / alpha, 0.0), -1)
-    # )
     J = J + jaxm.mean(jaxm.sum(logbarrier_cstr_with_lagrange_fallback(-X + x_l_, alpha, lam), -1))
     J = J + jaxm.mean(jaxm.sum(logbarrier_cstr_with_lagrange_fallback(X - x_u_, alpha, lam), -1))
     J = J + jaxm.mean(jaxm.sum(logbarrier_cstr_with_lagrange_fallback(-U + u_l_, alpha, lam), -1))
@@ -92,14 +82,9 @@ def filter_kws(method, d):
 
 def generate_routines_for_obj_fn(
     obj_fn: Callable,
-    solver_settings: Optional[Dict[str, Any]] = None,
+    solver_settings: SolverSettings | None = None,
 ):
-    opts = solver_settings if solver_settings is not None else dict()
-    try:
-        jaxm.jax.devices("gpu")
-        device = opts.get("device", "cuda")
-    except RuntimeError:
-        device = opts.get("device", "cpu")
+    opts = dataclasses.asdict(solver_settings) if solver_settings is not None else dict()
 
     nonlinear_opts = dict(
         maxiter=100,
@@ -116,7 +101,6 @@ def generate_routines_for_obj_fn(
         reg0=1e-6,
         linesearch="binary_search",
         force_step=True,
-        device=device,
     )
     # sqp_opts = dict(cvx_opts, linesearch="scan", maxls=10)
     # sqp_opts = dict(cvx_opts, linesearch="scan", maxls=500)
@@ -149,15 +133,13 @@ def generate_routines_for_obj_fn(
         traceback.print_exc()
     run_methods = {k: jaxm.jit(solver.run) for k, solver in solvers.items()}
     update_methods = {k: jaxm.jit(solver.update) for k, solver in solvers.items()}
-    # run_methods = {k: solver.run for k, solver in solvers.items()}
-    # update_methods = {k: solver.update for k, solver in solvers.items()}
 
-    @partial(jaxm.jit, static_argnums=(0,))
+    @partial(jaxm.jit, static_argnums=(0,), static_argnames=("max_it",))
     def run_with_state(
         solver: int, z: Array, args: Dict[str, List[Array]], state, max_it: int = 100
     ):
+        #jaxm.jax.debug.callback(lambda max_it: print(f"max_it = {max_it}"), max_it)
         update_method = update_methods[solver]
-        # update_method = update_methods[SOLVER_SQP]
 
         def body_fn(i, z_state):
             return update_method(*z_state, args)
@@ -184,7 +166,7 @@ def generate_routines_for_obj_fn(
         )
         return jaxm.jax.vmap(run_with_state, in_axes=in_axes)(solver, z, args, state, max_it)
 
-        #if solver not in vmap_fn_cache:
+        # if solver not in vmap_fn_cache:
         #    in_axes = tree_map(
         #        lambda x: 0
         #        if (hasattr(x, "shape") and x.ndim > 0 and x.shape[0] == z.shape[0])
@@ -194,10 +176,10 @@ def generate_routines_for_obj_fn(
         #    vmap_fn_cache[solver] = jaxm.jit(
         #        jaxm.jax.vmap(run_with_state, in_axes=in_axes), static_argnums=0
         #    )
-        #vmap_ret = vmap_fn_cache[solver](solver, z, args, state, max_it)
-        #return vmap_ret
+        # vmap_ret = vmap_fn_cache[solver](solver, z, args, state, max_it)
+        # return vmap_ret
 
-        #if solver not in pmap_fn_cache:
+        # if solver not in pmap_fn_cache:
         #    in_axes = tree_map(
         #        lambda x: 0
         #        if (hasattr(x, "shape") and x.ndim > 0 and x.shape[0] == z.shape[0])
@@ -211,8 +193,8 @@ def generate_routines_for_obj_fn(
         #            in_axes=in_axes,
         #        )
         #    )
-        #pmap_ret = pmap_fn_cache[solver](z, args, state, max_it)
-        #return pmap_ret
+        # pmap_ret = pmap_fn_cache[solver](z, args, state, max_it)
+        # return pmap_ret
 
     @partial(jaxm.jit, static_argnums=(0,))
     def pinit_state(solver: int, U_prev: Array, args: Dict[str, List[Array]]):
@@ -244,13 +226,12 @@ class SolverStore:
     def __init__(self):
         self.store = dict()
 
-    def get_routines(self, obj_fn: Callable, solver_settings=None):
-        ss = solver_settings if solver_settings is not None else dict()
+    def get_routines(self, obj_fn: Callable, solver_settings: SolverSettings | None = None):
+        ss = dataclasses.asdict(solver_settings) if solver_settings is not None else dict()
         obj_fn_key = cp.dumps(
             (hash(obj_fn), tuple((k, ss[k]) for k in STATIC_ARGUMENTS if k in ss.keys()))
         )
         if obj_fn_key not in self.store:
-            # print("Generating a new solver")
             self.store[obj_fn_key] = generate_routines_for_obj_fn(obj_fn, ss)
         return (self.store[obj_fn_key]["pinit_state"], self.store[obj_fn_key]["prun_with_state"])
 

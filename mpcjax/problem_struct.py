@@ -5,6 +5,8 @@ from warnings import warn
 
 from jaxfi import jaxm
 
+from .solver_settings import SolverSettings
+
 
 class Problem(Mapping):
     """A way of initializing an optimal control problem with a majority of
@@ -94,7 +96,7 @@ class Problem(Mapping):
                 v = jaxm.tile(v, correct_shape[: -v.ndim] + ((1,) * v.ndim))
             setattr(self, f"_{k}", v)
 
-        getter = lambda self: getattr(self, f"_{k}") # noqa: E731
+        getter = lambda self: getattr(self, f"_{k}")  # noqa: E731
         setter = partial(_check_dims_and_tile_and_set, k)
         setattr(Problem, k, property(getter, setter))
 
@@ -114,7 +116,8 @@ class Problem(Mapping):
         self._u_u = None
         self._x_l = None
         self._x_u = None
-        self.solver_settings = dict(smooth_alpha=1e2, solver="cvx", linesearch="scan", maxls=100)
+        self.solver_settings = SolverSettings()
+        self.smooth_alpha = 1e2
         self.reg_x = 1e0
         self.reg_u = 1e0
         self.max_it = 30
@@ -138,8 +141,6 @@ class Problem(Mapping):
             "verbose",
             "slew_rate",
             "P",
-            "dtype",
-            "device",
         ]
         problem = {k: getattr(self, k) for k in keys}
 
@@ -153,7 +154,7 @@ class Problem(Mapping):
         optional_keys = ["lin_cost_fn", "diff_cost_fn"]
         problem = dict(problem, **{k: getattr(self, k) for k in optional_keys if hasattr(self, k)})
 
-        return problem
+        return jaxm.to(problem, dtype=self.dtype, device=self.device)
 
     ################################################################################################
 

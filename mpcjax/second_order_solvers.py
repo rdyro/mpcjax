@@ -54,7 +54,7 @@ class ConvexSolver(base.IterativeSolver):
             jit (bool, optional): Whether to jit objective and derivatives. Defaults to True.
             maxls (int, optional): Max num of objective evaluations in lineasearch. Defaults to 20.
             min_stepsize (int, optional): Minimum stepsize to take. Defaults to 1e-7.
-            max_stepsize (int, optional): Maximum stepsie to take. Defaults to 1e1.
+            max_stepsize (int, optional): Maximum stepsize to take. Defaults to 1e1.
             reg0 (float, optional): Hessian l2 regularization. Defaults to 1e-6.
             linesearch (str, optional): Which linesearch to use from
                                     ["scan", "backtracking", "binary_search"]. Defaults to "scan".

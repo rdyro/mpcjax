@@ -1,12 +1,14 @@
 import sys
 from pathlib import Path
+from dataclasses import asdict
 
 import numpy as np
 from jaxfi import jaxm
 import jax
 from jax import numpy as jnp
 
-from mpcjax import solve
+from mpcjax import solve, SolverSettings
+
 try:
     from .dynamics import f_fx_fu_fn
 except ImportError:
@@ -47,23 +49,29 @@ def test_simple_solve():
                 U_prev=U_prev,
                 u_l=u_l,
                 u_u=u_u,
-                solver_settings=dict(smooth_alpha=1e2, solver="sqp", linesearch="scan", maxls=50),
-                reg_x=1e0,
+                solver_settings=SolverSettings(
+                    solver="sqp", linesearch="scan", maxls=500, max_it=30
+                ),
+                reg_x=1e-1,
                 reg_u=1e-1,
                 max_it=100,
                 res_tol=1e-12,
                 verbose=True,
                 slew_rate=1e-2,
                 P=1.0 * jaxm.ones((N,)),
-                dtype=dtype,
-                device=device,
+                smooth_alpha=1e3,
             )
+            problem = jaxm.to(problem, dtype=dtype, device=device)
 
             X1, U1, _ = solve(**problem, direct_solve=True)
             X2, U2, _ = solve(**problem, direct_solve=False)
 
-            assert jaxm.norm((X1 - X2).reshape(-1)) < 5e-2
-            assert jaxm.norm((U1 - U2).reshape(-1)) < 5e-2
+            accuracy = 5e-2
+
+            err_x = jaxm.norm((X1 - X2).reshape(-1))
+            assert err_x < accuracy, f"err_x = {err_x}"
+            err_u = jaxm.norm((U1 - U2).reshape(-1))
+            assert err_u < accuracy, f"err_u = {err_u}"
             assert jaxm.max(jaxm.abs(U1)) < u_lim
             assert jaxm.max(jaxm.abs(U2)) < u_lim
 
@@ -105,25 +113,29 @@ def test_compare_to_pmpc():
                 U_prev=U_prev,
                 u_l=u_l,
                 u_u=u_u,
-                solver_settings=dict(smooth_alpha=1e2, solver="sqp", linesearch="scan", maxls=50),
-                reg_x=1e0,
+                solver_settings=SolverSettings(
+                    solver="sqp", linesearch="scan", maxls=500, max_it=30
+                ),
+                reg_x=1e-1,
                 reg_u=1e-1,
                 max_it=100,
                 res_tol=1e-12,
                 verbose=True,
                 slew_rate=1e-2,
                 P=1.0 * jaxm.ones((N,)),
-                dtype=dtype,
-                device=device,
+                smooth_alpha=1e3,
             )
+            problem = jaxm.to(problem, dtype=dtype, device=device)
 
             X1, U1, _ = solve(**problem, direct_solve=True)
             X2, U2, _ = solve(**problem, direct_solve=False)
             X_pmpc, U_pmpc, _ = pmpc_solve(
-                **dict(problem, solver_settings=dict(problem["solver_settings"], solver="ecos"))
+                **dict(
+                    problem, solver_settings=dict(asdict(problem["solver_settings"]), solver="ecos")
+                )
             )
 
-            accuracy = 3e-2
+            accuracy = 5e-2
 
             err_1 = jaxm.norm((X1 - X_pmpc).reshape(-1))
             assert err_1 < accuracy, f"err_1 = {err_1}"

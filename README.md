@@ -5,7 +5,6 @@ Pure JAX implementation of Model Predictive Control (SCP MPC).
 This is non-linear dynamics finite horizon MPC solver and support for arbitrary
 cost. It supports batching on the CPU and GPU.
 
-
 # Installation
 
 Install by issuing
@@ -18,6 +17,18 @@ $ git clone https://github.com/rdyro/mpcjax.git
 $ cd mpcjax
 $ pip install .
 ```
+
+# Changelog
+
+- version 0.4.0
+  - `solve` - the main routine, is not jit compatible
+  - `optimality_fn` is not a jit-compatible way of getting optimality conditions - fixed-point
+  - added *remote* solver, allowing a persistent solver process (or a process pool)
+    - redis is a hard dependency for the remote mode
+
+- version 0.3.0
+  - introduced `direct_solve` mode in which the rollout itself is differentiate
+  as part of optimization, i.e., *direct* nonlinear optimization
 
 # Basic Usage
 
@@ -159,3 +170,4 @@ Warm-starting of the SCP procedure by providing a good `X_prev, U_prev` guess is
 
 Warm-starting of the underlying convex solver is currently not supported, as it does not lead to a noticeable
 performance improvement on problems we tested the solver on.
+

@@ -6,11 +6,11 @@ from jaxfi import jaxm
 import jax
 from jax import numpy as jnp
 
-root_path = Path("").absolute().parent
+root_path = Path(__file__).absolute().parents[1]
 if str(root_path) not in sys.path:
     sys.path.insert(0, str(root_path))
 
-from mpcjax import solve
+from mpcjax import solve, SolverSettings
 from tests.dynamics import f_fx_fu_fn
 
 
@@ -44,7 +44,7 @@ def test_slew():
                 U_prev=U_prev,
                 u_l=u_l,
                 u_u=u_u,
-                solver_settings=dict(smooth_alpha=1e2, solver="sqp", linesearch="scan", maxls=50),
+                solver_settings=SolverSettings(solver="sqp", linesearch="scan", maxls=50),
                 reg_x=1e0,
                 reg_u=1e-1,
                 max_it=100,
@@ -52,9 +52,8 @@ def test_slew():
                 verbose=True,
                 slew_rate=1e4,
                 P=1.0 * jaxm.ones((N,)),
-                dtype=dtype,
-                device=device,
             )
+            problem = jaxm.to(problem, dtype=dtype, device=device)
 
             X1, U1, _ = solve(**problem, direct_solve=True)
             X2, U2, _ = solve(**problem, direct_solve=False)
@@ -64,7 +63,7 @@ def test_slew():
             traj_err = jaxm.norm((X1 - X2).reshape(-1))
             assert traj_err < 1e-1, f"max traj error: {traj_err:.4e}"
 
-            slew_err = jaxm.max(jaxm.norm(U1[1:, :] - U1[:-1, :], axis=-1))
+            slew_err = jaxm.max(jaxm.norm(U1[..., 1:, :] - U1[..., :-1, :], axis=-1))
             msg = f"max slew error: {slew_err:.4e}"
             print(msg)
             assert slew_err < 5e-2, msg
@@ -100,7 +99,9 @@ def test_slew0():
                 U_prev=U_prev,
                 u_l=u_l,
                 u_u=u_u,
-                solver_settings=dict(smooth_alpha=1e2, solver="sqp", linesearch="scan", maxls=50),
+                solver_settings=SolverSettings(
+                    solver="sqp", linesearch="scan", maxls=50, max_it=30
+                ),
                 reg_x=1e0,
                 reg_u=1e-1,
                 max_it=100,
@@ -108,9 +109,9 @@ def test_slew0():
                 verbose=True,
                 slew0_rate=1e4,
                 P=1.0 * jaxm.ones((N,)),
-                dtype=dtype,
-                device=device,
+                smooth_alpha=1e2,
             )
+            problem = jaxm.to(problem, dtype=dtype, device=device)
 
             X1, U1, _ = solve(**problem, direct_solve=True)
             X2, U2, _ = solve(**problem, direct_solve=False)
@@ -120,11 +121,11 @@ def test_slew0():
             assert ctrl_err < 5e-2, f"max ctrl error: {ctrl_err:.4e}"
 
             # slew difference of first control to 0
-            slew0_err = jaxm.norm(U1[0, :])
+            slew0_err = jaxm.norm(U1[..., 0, :])
             msg = f"max slew error: {slew0_err:.4e}"
             print(msg)
             assert slew0_err < 1e-2, msg
-            other_ctrls_norm = jaxm.norm(U1[1:, :])
+            other_ctrls_norm = jaxm.norm(U1[..., 1:, :])
             msg = f"max other ctrls norm: {other_ctrls_norm:.4e}"
             print(msg)
             assert other_ctrls_norm > 1e-1, msg
@@ -132,11 +133,11 @@ def test_slew0():
             # slew difference of first control to 0
             u0_slew = 0.6 * jaxm.ones((udim,), dtype=dtype, device=device)
             X1, U1, _ = solve(**dict(problem, u0_slew=u0_slew), direct_solve=False)
-            slew0_err = jaxm.norm(U1[0, :] - u0_slew)
+            slew0_err = jaxm.norm(U1[..., 0, :] - u0_slew)
             msg = f"max slew error: {slew0_err:.4e}"
             print(msg)
             assert slew0_err < 1e-2, msg
-            other_ctrls_norm = jaxm.norm(U1[1:, :])
+            other_ctrls_norm = jaxm.norm(U1[..., 1:, :])
             msg = f"max other ctrls norm: {other_ctrls_norm:.4e}"
             print(msg)
             assert other_ctrls_norm > 1e-1, msg

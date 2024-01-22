@@ -1,20 +1,37 @@
 from __future__ import annotations
 
+from functools import partial
 from typing import Any, Callable, Optional
 from copy import copy
 
 import jaxfi
+import jax
 from jax import Array
 from jaxfi import jaxm
 
 from .jax_solver import _build_problems, _jax_sanitize, _augment_cost
 from .solver_definitions import _default_obj_fn
 from .dynamics_definitions import rollout_scp
+from .function_cache import DynamicsFunctionStore, ObjectiveFunctionStore
 from .function_cache import DYNAMICS_FUNCTION_STORE, OBJECTIVE_FUNCTION_STORE
 from .utils import combine_dicts
 
 
-def generate_optimality_fn(
+static_argnames = (
+    "f_fx_fu_fn",
+    "max_it",
+    "verbose",
+    "diff_cost_fn",
+    "lin_cost_fn",
+    "dtype",
+    "direct_solve",
+    "solver_settings",
+)
+
+
+@partial(jax.jit, static_argnames=static_argnames)
+def optimality_fn(
+    U: Array,
     f_fx_fu_fn: Callable,
     Q: Array,
     R: Array,
@@ -34,14 +51,11 @@ def generate_optimality_fn(
     lin_cost_fn: Optional[Callable] = None,
     diff_cost_fn: Optional[Callable] = None,
     solver_settings: Optional[dict[str, Any]] = None,
-    solver_state: Optional[Any] = None,
     dtype: Any | None = None,
-    device: Any | None = None,
     direct_solve: bool = True,
     **extra_kw,
 ) -> tuple[Array, Array, dict[str, Any]]:
-    dtype = Q.dtype if dtype is None else jaxfi.default_dtype_for_device(device)
-    device = (Q.device() if hasattr(Q, "device") else "cpu") if device is None else device
+    dtype = Q.dtype if dtype is None else dtype
 
     problems = _build_problems(
         f_fx_fu_fn=f_fx_fu_fn,
@@ -61,55 +75,52 @@ def generate_optimality_fn(
         slew_rate=slew_rate,
         u0_slew=u0_slew,
         solver_settings=solver_settings,
-        solver_state=solver_state,
         dtype=dtype,
-        device=device,
         **extra_kw,
     )
-
-    problems = copy(problems)
     f_fx_fu_fn = problems["f_fx_fu_fn"]
-    rollout_fn = DYNAMICS_FUNCTION_STORE.get_rollout_fn(
-        DYNAMICS_FUNCTION_STORE.get_dyn_function(f_fx_fu_fn)
+    # rollout_fn = DYNAMICS_FUNCTION_STORE.get_rollout_fn(
+    #    DYNAMICS_FUNCTION_STORE.get_dyn_function(f_fx_fu_fn)
+    # )
+    rollout_fn = DynamicsFunctionStore._generate_rollout(
+        DynamicsFunctionStore._generate_dyn_fn(f_fx_fu_fn)
     )
     problems["f_fx_fu_fn"] = None
     problems["reg_x"], problems["reg_u"] = 0.0, 0.0
-    problems["smooth_alpha"] = problems["solver_settings"]["smooth_alpha"]
+    # problems["smooth_alpha"] = problems["solver_settings"]["smooth_alpha"]
 
     # define the objective function
     if direct_solve:
-        obj_fn = OBJECTIVE_FUNCTION_STORE.get_obj_fn(rollout_fn, _default_obj_fn, diff_cost_fn)
-    else:
-        obj_fn = OBJECTIVE_FUNCTION_STORE.get_obj_fn(rollout_scp, _default_obj_fn, diff_cost_fn)
-    k_fn = jaxm.jit(jaxm.grad(obj_fn, argnums=0))
-
-    problems_model = problems
-
-    def optimality_fn(U, problems_input):
-        problems = _jax_sanitize(combine_dicts(problems_input, problems_model))
-        smooth_alpha = problems_input.get("solver_settings", dict()).get("smooth_alpha")
-        if smooth_alpha is not None:
-            problems["smooth_alpha"] = smooth_alpha
-        problems["reg_x"], problems["reg_u"] = 0.0, 0.0
-
-        if not direct_solve:
-            X = rollout_fn(U, problems)
-            f, fx, fu = f_fx_fu_fn(X[..., :-1, :], U, problems["P"])
-            problems["f"], problems["fx"], problems["fu"] = f, fx, fu
-            problems["X_prev"], problems["U_prev"] = X[..., 1:, :], U
-
-        X_ref_, U_ref_ = _augment_cost(
-            lin_cost_fn,
-            problems["X_prev"],
-            problems["U_prev"],
-            problems["Q"],
-            problems["R"],
-            problems["X_ref"],
-            problems["U_ref"],
-            dict(problems, solver_settings=_jax_sanitize(problems["solver_settings"])),
-            force_dtype=False,
+        # obj_fn = OBJECTIVE_FUNCTION_STORE.get_obj_fn(rollout_fn, _default_obj_fn, diff_cost_fn)
+        obj_fn = ObjectiveFunctionStore._generate_objective_function(
+            rollout_fn, _default_obj_fn, diff_cost_fn
         )
-        problems["X_ref"], problems["U_ref"] = X_ref_, U_ref_
-        return k_fn(U, problems)
+    else:
+        # obj_fn = OBJECTIVE_FUNCTION_STORE.get_obj_fn(rollout_scp, _default_obj_fn, diff_cost_fn)
+        obj_fn = ObjectiveFunctionStore._generate_objective_function(
+            rollout_scp, _default_obj_fn, diff_cost_fn
+        )
+    # k_fn = jaxm.jit(jaxm.grad(obj_fn, argnums=0))
 
-    return optimality_fn
+    problems = {k: v for k, v in problems.items() if k not in {"f_fx_fu_fn", "solver_settings"}}
+    k_fn = jaxm.grad(obj_fn, argnums=0)
+    problems["reg_x"], problems["reg_u"] = 0.0, 0.0
+
+    if not direct_solve:
+        X = rollout_fn(U, problems)
+        f, fx, fu = f_fx_fu_fn(X[..., :-1, :], U, problems["P"])
+        problems["f"], problems["fx"], problems["fu"] = f, fx, fu
+        problems["X_prev"], problems["U_prev"] = X[..., 1:, :], U
+
+    X_ref_, U_ref_ = _augment_cost(
+        lin_cost_fn,
+        problems["X_prev"],
+        problems["U_prev"],
+        problems["Q"],
+        problems["R"],
+        problems["X_ref"],
+        problems["U_ref"],
+        _jax_sanitize(problems),
+    )
+    problems["X_ref"], problems["U_ref"] = X_ref_, U_ref_
+    return k_fn(U, problems)

@@ -14,8 +14,9 @@ class ObjectiveFunctionStore:
     def __init__(self):
         self.store = dict()
 
+    @staticmethod
     def _generate_objective_function(
-        self, rollout_fn: Callable, obj_fn: Callable, custom_obj_fn: Callable | None = None
+        rollout_fn: Callable, obj_fn: Callable, custom_obj_fn: Callable | None = None
     ) -> Callable:
         @jax.jit
         def _obj_fn(U: Array, problems: dict[str, Any]) -> Array:
@@ -49,7 +50,8 @@ class DynamicsFunctionStore:
         self.dyn_store = dict()
         self.Ft_ft_store = dict()
 
-    def _generate_rollout(self, dyn_fn: Callable) -> Callable:
+    @staticmethod
+    def _generate_rollout(dyn_fn: Callable) -> Callable:
         @jaxm.jit
         def rollout(U, problems):
             """Rolls out dynamics into the future based on an initial state x0"""
@@ -61,15 +63,17 @@ class DynamicsFunctionStore:
 
             x0, P = problems["x0"], problems["P"]
             xs = [x0[..., None, :]]
-            U = jaxm.moveaxis(U, -2, 0)
             P = jaxm.broadcast_to(P, U.shape[:-1] + P.shape[-1:])
+            U = jaxm.moveaxis(U, -2, 0)
+            P = jaxm.moveaxis(P, -2, 0)
             xs = jaxm.moveaxis(jaxm.lax.scan(rollout_step, x0, (U, P))[1], 0, -2)
             return jaxm.cat([x0[..., None, :], xs], -2)
 
         return rollout
 
-    def _generate_linearization(self, dyn_fn: Callable) -> Callable:
-        rollout_fn = self.get_rollout_fn(dyn_fn)
+    @staticmethod
+    def _generate_linearization(dyn_fn: Callable) -> Callable:
+        rollout_fn = DynamicsFunctionStore.get_rollout_fn(dyn_fn)
 
         @jaxm.jit
         def Ft_ft_fn(x0, U, P):
@@ -86,10 +90,14 @@ class DynamicsFunctionStore:
 
         return Ft_ft_fn
 
+    @staticmethod
+    def _generate_dyn_fn(f_fx_fu_fn: Callable) -> Callable:
+        return jax.jit(lambda x, u, p: f_fx_fu_fn(x, u, p)[0])
+
     def get_dyn_function(self, f_fx_fu_fn: Callable) -> Callable:
         fn_key = hash(f_fx_fu_fn)
         if fn_key not in self.dyn_store:
-            self.dyn_store[fn_key] = jaxm.jit(lambda x, u, p: f_fx_fu_fn(x, u, p)[0])
+            self.dyn_store[fn_key] = self._generate_dyn_fn(f_fx_fu_fn)
         return self.dyn_store[fn_key]
 
     def get_rollout_fn(self, dyn_fn: Callable | str) -> Callable:

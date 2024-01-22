@@ -67,6 +67,7 @@ def fu_(x, u, p):
 def f_fx_fu_fn(x, u, p=None):
     if p is None:
         p = jaxm.to(jaxm.array([1.0, 1.0, 0.3]), dtype=x.dtype)
+    p = jaxm.broadcast_to(p, x.shape[:-p.ndim] + p.shape)
     if x.ndim == 3:
         return jax.vmap(car)(x, u, p), jax.vmap(fx_)(x, u, p), jax.vmap(fu_)(x, u, p)
     else:
